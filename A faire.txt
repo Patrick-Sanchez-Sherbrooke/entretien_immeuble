@@ -1,40 +1,29 @@
------------------------------
-A tester et mettre sur GitHub 
------------------------------
-- Quand on modifie une tâche: le titre est "Modifier la tâche". Ajouter le #tâche au titre
+Note: dans la base de données 'supabase', on a ajouté le champ 'created_by' et 'execution_note' dans la table 'tasks'
 
------------------------------
-En cours de modification
------------------------------
-- sélection d'un champ: ne pas sélectionner tout le champ mais placer le curseur là où on clique
-- lorsqu'une photo est ajoutée, on ne revient pas sur la page de la tâche!
-- Ajouter une note pour l'exécution de la tâche
-- Ajouter dans les rapports et écrans le créateur de la tâche
-- Modification de tâche: de terminée à en cours: photo+date exécution doit être supprimée
-- Dans la tâche: bouton pour supprimer la photo quand elle existe
+A- Écran de connexion: on ne voit pas le message d'erreur dans le carré rouge
 
------------------------------
-A faire
------------------------------
-- pouvoir effacer la base de données en local et synchroniser avec le serveur
+B- Ecran de gestion des immeubles et écran de gestion des utilisateurs: faire apparaitre le texte du carré dans le titre d'une différente couleur
 
-- rapport: demander si on y met aussi les tâches archivées. Si oui, les rapatrier du serveur si elles ne le sont pas déjà et ajouter un critère pour ce status
+C- Ecran de liste des tâches: sous l'étage, mettre:
+1- icône + "Description:' + description de la tâche. Si la description est trop longue ppour la mettre sur la ligne, la tronquer en mettant des '...' à la fin
+2- icône + "Créée le:" + date de création si elle existe (created_by dans la table) + nom du créateur (justifié à droite) en enlevant le 'point' devant le nom
+3- icône + "Planifiée le:" + date de planification si elle existe
+4- icône + "Terminée le:" + date de terminaison si elle existe + nom de l'exécutant (justifié à droite)
 
-- Ping automatique sur la base de données pour éviter la pause
+D- Ecran de détail d'une tâche et de modification d'une tâche: mettre une execution_note (si elle existe) sous le nom de l'exécutant
 
-- Si erreur de base de données, push pour l'admin
+E- Modification de tâche: quand on passe du statut de 'terminée' à 'en cours', on doit supprimer la photo + date d'exécution
 
-- Faire un push pour les éxécutants quand il y a une nouvelle tâche
+F- Dans la table tasks, stocker l'id l'immeuble au lieu du nom et modifier:
+1- liste des tâches: tenir compte de ce stockage pour trouver le nom de l'immeuble 
+2- détail 'une tâche: tenir compte de ce stockage pour trouver le nom de l'immeuble
+3- Modification d'une tâche: tenir compte de ce stockage pour trouver le nom de l'immeuble
+4- Rapports: tenir compte de ce stockage pour trouver le nom de l'immeuble
 
-- Faire un push aux autres exécutants qd une tâche est terminée
+G- Ajouter un rôle de 'Planificateur' dans la création ou la modification d'un utilisateur. Il a les mêmes privilèges que les utilisateurs mais ne peut pas exécuter une tâche (pas possible de mettre de date d'exécution ni de photo ni de note). 
 
-- Ajouter un rôle de planificateur. Il a les mêmes privilèges que les utilisateurs mais ne peut pas exécuter une tâche (de mettre de date d'exécution ni de photo). 
-- L'admin peut assigner un rôle choisi parmis la liste "Administrateur, Planificateur, Exécutant".
-
-- Ajouter un profil utilisateur avec:
-Changement de mot de passe
-
-- Générer un diagramme d'opération
-- Générer un manuel utilisateur
-- Générer un manuel technique
-
+A FAIRE
+-------
+Voir pour les push vers les exécutants
+Vider la database locale à la demande
+Pouvoir changer de mot de passe pour chaque profile
