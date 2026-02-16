@@ -3,10 +3,12 @@
 // CHAMP TEXTE PERSONNALISÉ
 // Place le curseur à l'endroit du tap sans sélectionner
 // ============================================
+
 import 'package:flutter/material.dart';
 
 class AppTextField extends StatefulWidget {
   final TextEditingController? controller;
+  final FocusNode? focusNode;
   final String? labelText;
   final String? hintText;
   final String? helperText;
@@ -15,15 +17,22 @@ class AppTextField extends StatefulWidget {
   final bool obscureText;
   final bool enabled;
   final bool readOnly;
+  final bool autofocus;
   final int? maxLines;
+  final int? maxLength;
   final TextInputType? keyboardType;
+  final TextInputAction? textInputAction;
+  final TextCapitalization textCapitalization;
+  final AutovalidateMode? autovalidateMode;
   final String? Function(String?)? validator;
   final void Function(String)? onChanged;
   final void Function(String)? onFieldSubmitted;
+  final VoidCallback? onTap;
 
   const AppTextField({
     super.key,
     this.controller,
+    this.focusNode,
     this.labelText,
     this.hintText,
     this.helperText,
@@ -32,11 +41,17 @@ class AppTextField extends StatefulWidget {
     this.obscureText = false,
     this.enabled = true,
     this.readOnly = false,
+    this.autofocus = false,
     this.maxLines = 1,
+    this.maxLength,
     this.keyboardType,
+    this.textInputAction,
+    this.textCapitalization = TextCapitalization.none,
+    this.autovalidateMode,
     this.validator,
     this.onChanged,
     this.onFieldSubmitted,
+    this.onTap,
   });
 
   @override
@@ -45,36 +60,38 @@ class AppTextField extends StatefulWidget {
 
 class _AppTextFieldState extends State<AppTextField> {
   late FocusNode _focusNode;
+  bool _ownsFocusNode = false;
   bool _wasAlreadyFocused = false;
 
   @override
   void initState() {
     super.initState();
-    _focusNode = FocusNode();
+    if (widget.focusNode != null) {
+      _focusNode = widget.focusNode!;
+    } else {
+      _focusNode = FocusNode();
+      _ownsFocusNode = true;
+    }
     _focusNode.addListener(_onFocusChange);
   }
 
   @override
   void dispose() {
     _focusNode.removeListener(_onFocusChange);
-    _focusNode.dispose();
+    if (_ownsFocusNode) _focusNode.dispose();
     super.dispose();
   }
 
   void _onFocusChange() {
     if (_focusNode.hasFocus) {
-      // Le champ vient de recevoir le focus
-      // On attend un court instant puis on désélectionne si tout est sélectionné
-      Future.delayed(const Duration(milliseconds: 50), () {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
         if (widget.controller != null && mounted && _focusNode.hasFocus) {
           final ctrl = widget.controller!;
           final sel = ctrl.selection;
-          // Si tout le texte est sélectionné automatiquement par Flutter
           if (sel.baseOffset == 0 &&
               sel.extentOffset == ctrl.text.length &&
               ctrl.text.isNotEmpty &&
               !_wasAlreadyFocused) {
-            // Placer le curseur à la fin du texte
             ctrl.selection = TextSelection.collapsed(
               offset: ctrl.text.length,
             );
@@ -83,7 +100,6 @@ class _AppTextFieldState extends State<AppTextField> {
         _wasAlreadyFocused = true;
       });
     } else {
-      // Le champ a perdu le focus
       _wasAlreadyFocused = false;
     }
   }
@@ -96,12 +112,17 @@ class _AppTextFieldState extends State<AppTextField> {
       obscureText: widget.obscureText,
       enabled: widget.enabled,
       readOnly: widget.readOnly,
+      autofocus: widget.autofocus,
       maxLines: widget.maxLines,
+      maxLength: widget.maxLength,
       keyboardType: widget.keyboardType,
+      textInputAction: widget.textInputAction,
+      textCapitalization: widget.textCapitalization,
+      autovalidateMode: widget.autovalidateMode,
       validator: widget.validator,
       onChanged: widget.onChanged,
       onFieldSubmitted: widget.onFieldSubmitted,
-      // Désactiver la sélection automatique de tout le texte
+      onTap: widget.onTap,
       enableInteractiveSelection: true,
       decoration: InputDecoration(
         labelText: widget.labelText,

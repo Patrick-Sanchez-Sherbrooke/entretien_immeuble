@@ -42,15 +42,25 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadStats() async {
-    final pendingTasks = await _localDb.getPendingTasks();
-    final doneTasks = await _localDb.getDoneTasks();
-    if (mounted) {
+    try {
+      final results = await Future.wait([
+        _localDb.getPendingTasks(),
+        _localDb.getDoneTasks(),
+      ]);
+
+      if (!mounted) return;
+
+      final pendingTasks = results[0];
+      final doneTasks = results[1];
+
       setState(() {
         _pendingTaskCount = pendingTasks.length;
         _doneTaskCount = doneTasks.length;
-        _totalTaskCount =
-            pendingTasks.length + doneTasks.length;
+        _totalTaskCount = _pendingTaskCount + _doneTaskCount;
       });
+    } catch (e) {
+      // Éviter de casser l'écran en cas d'erreur de lecture DB
+      debugPrint('Erreur lors du chargement des statistiques: $e');
     }
   }
 
@@ -58,56 +68,107 @@ class _HomeScreenState extends State<HomeScreen> {
     // Toujours extraire les immeubles des tâches locales existantes
     await _extractImmeublesFromLocalTasks();
 
-    if (await _syncService.hasConnection()) {
-      setState(() => _isSyncing = true);
-      final result = await _syncService.syncAll();
-      if (_auth.currentUser != null) {
-        await NotificationService()
-            .checkServerNotifications(_auth.currentUser!.id);
-      }
-      await _loadStats();
-      if (mounted) {
-        setState(() => _isSyncing = false);
-        if (result.success && result.count > 0) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('✅ ${result.message}'),
-              backgroundColor: AppTheme.successColor,
-            ),
-          );
-        }
-      }
-    }
+    await _performSync(
+      showSuccessOnly: true,
+      checkNotifications: true,
+    );
   }
 
   /// Extraire les immeubles des tâches locales et les insérer dans la table immeubles
   Future<void> _extractImmeublesFromLocalTasks() async {
     try {
       final tasks = await _localDb.getActiveTasks();
+      final immeubles = <String>{};
+
       for (var task in tasks) {
         if (task.immeuble.isNotEmpty) {
-          await _localDb.insertImmeubleIfNotExists(task.immeuble);
+          immeubles.add(task.immeuble);
         }
       }
+
+      for (final immeuble in immeubles) {
+        await _localDb.insertImmeubleIfNotExists(immeuble);
+      }
     } catch (e) {
-      // Ignorer silencieusement
+      // Ignorer silencieusement côté UI mais loguer pour le debug
+      debugPrint(
+          'Erreur lors de l\'extraction des immeubles depuis les tâches locales: $e');
     }
   }
 
   Future<void> _manualSync() async {
+    await _performSync(
+      showSuccessOnly: false,
+      checkNotifications: false,
+    );
+  }
+
+  /// Logique commune de synchronisation avec meilleure gestion des erreurs
+  Future<void> _performSync({
+    required bool showSuccessOnly,
+    required bool checkNotifications,
+  }) async {
+    if (!mounted) return;
+
     setState(() => _isSyncing = true);
-    final result = await _syncService.syncAll();
-    await _loadStats();
-    if (mounted) {
+
+    try {
+      final hasConnection = await _syncService.hasConnection();
+
+      if (!hasConnection) {
+        if (!mounted) return;
+        setState(() => _isSyncing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Aucune connexion disponible pour la synchronisation.'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+        return;
+      }
+
+      final result = await _syncService.syncAll();
+
+      if (checkNotifications && _auth.currentUser != null) {
+        await NotificationService()
+            .checkServerNotifications(_auth.currentUser!.id);
+      }
+
+      await _loadStats();
+
+      if (!mounted) return;
+
       setState(() => _isSyncing = false);
+
+      final successSnackBar = SnackBar(
+        content: Text('✅ ${result.message}'),
+        backgroundColor: AppTheme.successColor,
+      );
+
+      final errorSnackBar = SnackBar(
+        content: Text('❌ ${result.message}'),
+        backgroundColor: AppTheme.errorColor,
+      );
+
+      if (showSuccessOnly) {
+        if (result.success && result.count > 0) {
+          ScaffoldMessenger.of(context).showSnackBar(successSnackBar);
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          result.success ? successSnackBar : errorSnackBar,
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSyncing = false);
+      debugPrint('Erreur lors de la synchronisation: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result.success
-              ? '✅ ${result.message}'
-              : '❌ ${result.message}'),
-          backgroundColor: result.success
-              ? AppTheme.successColor
-              : AppTheme.errorColor,
+        const SnackBar(
+          content:
+              Text('Une erreur est survenue lors de la synchronisation.'),
+          backgroundColor: AppTheme.errorColor,
         ),
       );
     }

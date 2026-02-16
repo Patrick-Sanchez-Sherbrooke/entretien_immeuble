@@ -51,6 +51,15 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
   bool get _isEditing => widget.task != null;
 
+  bool get _hasPhoto {
+    return (_photoLocalPath != null && _photoLocalPath!.isNotEmpty) ||
+        (_photoUrl != null && _photoUrl!.isNotEmpty);
+  }
+
+  // ============================================
+  // CYCLE DE VIE
+  // ============================================
+
   @override
   void initState() {
     super.initState();
@@ -85,27 +94,18 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     super.dispose();
   }
 
-  Future<void> _loadImmeubles() async {
-    // D'abord, extraire les immeubles des tâches existantes
-    try {
-      final tasks = await _localDb.getActiveTasks();
-      for (var task in tasks) {
-        if (task.immeuble.isNotEmpty) {
-          await _localDb.insertImmeubleIfNotExists(task.immeuble);
-        }
-      }
-    } catch (e) {
-      // Ignorer
-    }
+  // ============================================
+  // CHARGEMENT DES IMMEUBLES
+  // ============================================
 
+  Future<void> _loadImmeubles() async {
     final immeubles = await _localDb.getActiveImmeubles();
     if (mounted) {
       setState(() {
         _immeubles = immeubles;
         // Si l'immeuble de la tâche n'est pas dans la liste, l'ajouter
         if (_selectedImmeuble != null &&
-            !_immeubles
-                .any((i) => i.nom == _selectedImmeuble)) {
+            !_immeubles.any((i) => i.nom == _selectedImmeuble)) {
           _immeubles.add(ImmeubleModel(
             id: 'temp',
             nom: _selectedImmeuble!,
@@ -118,15 +118,12 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   // ============================================
   // AJOUTER UN IMMEUBLE (ADMIN UNIQUEMENT)
   // ============================================
+
   void _showAddImmeubleDialog() {
-    // Seul l'administrateur peut ajouter un immeuble
     if (!_auth.isAdmin) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-              '❌ Seul un administrateur peut ajouter un immeuble'),
-          backgroundColor: AppTheme.errorColor,
-        ),
+      _showSnackBar(
+        '❌ Seul un administrateur peut ajouter un immeuble',
+        isError: true,
       );
       return;
     }
@@ -150,20 +147,16 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
             onPressed: () async {
               final nom = controller.text.trim();
               if (nom.isNotEmpty) {
-                // Ajouter en local
                 await _localDb.insertImmeubleIfNotExists(nom);
 
-                // Ajouter sur Supabase si connecté
                 if (await SyncService().hasConnection()) {
                   try {
-                    await _supabase
-                        .insertImmeubleIfNotExists(nom);
-                  } catch (e) {
+                    await _supabase.insertImmeubleIfNotExists(nom);
+                  } catch (_) {
                     // Sera synchronisé plus tard
                   }
                 }
 
-                // Recharger la liste
                 await _loadImmeubles();
 
                 if (mounted) {
@@ -180,6 +173,10 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       ),
     );
   }
+
+  // ============================================
+  // GESTION DES PHOTOS
+  // ============================================
 
   Future<void> _pickImage() async {
     final picker = ImagePicker();
@@ -199,22 +196,21 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 leading: const Icon(Icons.camera_alt,
                     color: AppTheme.primaryColor),
                 title: const Text('Prendre une photo'),
-                onTap: () => Navigator.of(dialogContext)
-                    .pop(ImageSource.camera),
+                onTap: () =>
+                    Navigator.of(dialogContext).pop(ImageSource.camera),
               ),
               ListTile(
                 leading: const Icon(Icons.photo_library,
                     color: AppTheme.secondaryColor),
                 title: const Text('Galerie photos'),
-                onTap: () => Navigator.of(dialogContext)
-                    .pop(ImageSource.gallery),
+                onTap: () =>
+                    Navigator.of(dialogContext).pop(ImageSource.gallery),
               ),
             ],
           ),
           actions: [
             TextButton(
-              onPressed: () =>
-                  Navigator.of(dialogContext).pop(null),
+              onPressed: () => Navigator.of(dialogContext).pop(null),
               child: const Text('Annuler'),
             ),
           ],
@@ -236,22 +232,11 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
         setState(() {
           _photoLocalPath = pickedFile.path;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Photo ajoutée avec succès'),
-            backgroundColor: AppTheme.successColor,
-            duration: Duration(seconds: 2),
-          ),
-        );
+        _showSnackBar('✅ Photo ajoutée avec succès');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Erreur: $e'),
-            backgroundColor: AppTheme.errorColor,
-          ),
-        );
+        _showSnackBar('❌ Erreur: $e', isError: true);
       }
     }
   }
@@ -261,8 +246,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Supprimer la photo ?'),
-        content: const Text(
-            'Voulez-vous vraiment supprimer cette photo ?'),
+        content:
+            const Text('Voulez-vous vraiment supprimer cette photo ?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -277,13 +262,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 _photoUrl = null;
               });
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('🗑️ Photo supprimée'),
-                  backgroundColor: AppTheme.errorColor,
-                  duration: Duration(seconds: 2),
-                ),
-              );
+              _showSnackBar('🗑️ Photo supprimée', isError: true);
             },
             child: const Text('Supprimer'),
           ),
@@ -291,6 +270,10 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       ),
     );
   }
+
+  // ============================================
+  // SÉLECTION DE DATE
+  // ============================================
 
   Future<void> _selectDate(bool isPlannedDate) async {
     final DateTime? picked = await showDatePicker(
@@ -302,7 +285,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       lastDate: DateTime(2030),
     );
 
-    if (picked != null) {
+    if (picked != null && mounted) {
       setState(() {
         if (isPlannedDate) {
           _plannedDate = picked;
@@ -313,136 +296,176 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     }
   }
 
-  Future<void> _saveTask() async {
-    if (!_formKey.currentState!.validate()) return;
+  // ============================================
+  // SAUVEGARDE — Validation
+  // ============================================
 
-    if (_selectedImmeuble == null ||
-        _selectedImmeuble!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-              Text('❌ Veuillez sélectionner un immeuble'),
-          backgroundColor: AppTheme.errorColor,
-        ),
-      );
-      return;
+  bool _validateForm() {
+    if (!_formKey.currentState!.validate()) return false;
+    if (_selectedImmeuble == null || _selectedImmeuble!.isEmpty) {
+      _showSnackBar('❌ Veuillez sélectionner un immeuble', isError: true);
+      return false;
     }
+    return true;
+  }
+
+  // ============================================
+  // SAUVEGARDE — Upload photo
+  // ============================================
+
+  Future<String> _uploadPhotoIfNeeded(String taskId) async {
+    // Si photo supprimée
+    if (_photoLocalPath == null && _photoUrl == null) return '';
+
+    // Si nouvelle photo locale
+    if (_photoLocalPath != null &&
+        _photoLocalPath!.isNotEmpty &&
+        _photoLocalPath != widget.task?.photoLocalPath) {
+      try {
+        if (await SyncService().hasConnection()) {
+          return await _supabase.uploadPhoto(_photoLocalPath!, taskId);
+        }
+      } catch (_) {
+        // On garde le chemin local, sera synchronisé plus tard
+      }
+    }
+
+    return _photoUrl ?? '';
+  }
+
+  // ============================================
+  // SAUVEGARDE — Construction du modèle
+  // ============================================
+
+  Future<TaskModel> _buildTaskModel(String photoUrl) async {
+    final currentUser = _auth.currentUser;
+    final taskId = widget.task?.id ?? const Uuid().v4();
+    int? taskNumber = widget.task?.taskNumber;
+
+    if (!_isEditing) {
+      taskNumber = await _localDb.getNextTaskNumber();
+    }
+
+    return TaskModel(
+      id: taskId,
+      taskNumber: taskNumber,
+      createdAt: widget.task?.createdAt ?? DateTime.now(),
+      immeuble: _selectedImmeuble!,
+      etage: _etageController.text.trim(),
+      chambre: _chambreController.text.trim(),
+      description: _descriptionController.text.trim(),
+      done: _done,
+      doneDate: _done ? (_doneDate ?? DateTime.now()) : null,
+      doneBy: _doneByController.text.trim(),
+      lastModifiedBy: currentUser?.id ?? '',
+      photoUrl: photoUrl,
+      photoLocalPath: _photoLocalPath ?? '',
+      plannedDate: _plannedDate,
+      syncStatus: _isEditing ? 'pending_update' : 'pending_create',
+    );
+  }
+
+  // ============================================
+  // SAUVEGARDE — Créer une nouvelle tâche
+  // ============================================
+
+  Future<void> _createNewTask(TaskModel task) async {
+    final currentUser = _auth.currentUser;
+    await _localDb.insertTask(task);
+    await _localDb.insertHistory(TaskHistoryModel(
+      taskId: task.id,
+      champModifie: 'creation',
+      ancienneValeur: '',
+      nouvelleValeur: 'Tâche créée',
+      modifiedBy: currentUser?.id ?? '',
+      modifiedByName: currentUser?.nomComplet ?? '',
+      syncStatus: 'pending_create',
+    ));
+  }
+
+  // ============================================
+  // SAUVEGARDE — Mettre à jour une tâche existante
+  // ============================================
+
+  Future<void> _updateExistingTask(TaskModel task) async {
+    final currentUser = _auth.currentUser;
+    await _recordChanges(
+      widget.task!,
+      task,
+      currentUser?.id ?? '',
+      currentUser?.nomComplet ?? '',
+    );
+    await _localDb.updateTask(task);
+  }
+
+  // ============================================
+  // SAUVEGARDE — Notifications
+  // ============================================
+
+  Future<void> _sendNotificationsIfNeeded(TaskModel task) async {
+    if (_done && !(widget.task?.done ?? false)) {
+      final users = await _localDb.getAllUsers();
+      for (var user in users) {
+        if (user.isAdmin && !user.archived) {
+          await NotificationService().notifyTaskDone(
+            user.id,
+            task.description,
+            _doneByController.text.trim(),
+          );
+        }
+      }
+    }
+  }
+
+  // ============================================
+  // SAUVEGARDE — Méthode principale
+  // ============================================
+
+  Future<void> _saveTask() async {
+    if (!_validateForm()) return;
 
     setState(() => _isSaving = true);
 
     try {
-      final currentUser = _auth.currentUser;
-      String taskId = widget.task?.id ?? const Uuid().v4();
-      int? taskNumber = widget.task?.taskNumber;
-
-      if (!_isEditing) {
-        taskNumber = await _localDb.getNextTaskNumber();
-      }
-
-      // Upload de la photo si nouvelle
-      String photoUrl = _photoUrl ?? '';
-      if (_photoLocalPath != null &&
-          _photoLocalPath!.isNotEmpty &&
-          _photoLocalPath != widget.task?.photoLocalPath) {
-        try {
-          if (await SyncService().hasConnection()) {
-            photoUrl = await _supabase.uploadPhoto(
-                _photoLocalPath!, taskId);
-          }
-        } catch (e) {
-          // On garde le chemin local
-        }
-      }
-
-      // Si photo supprimée
-      if (_photoLocalPath == null && _photoUrl == null) {
-        photoUrl = '';
-      }
-
-      final task = TaskModel(
-        id: taskId,
-        taskNumber: taskNumber,
-        createdAt: widget.task?.createdAt ?? DateTime.now(),
-        immeuble: _selectedImmeuble!,
-        etage: _etageController.text.trim(),
-        chambre: _chambreController.text.trim(),
-        description: _descriptionController.text.trim(),
-        done: _done,
-        doneDate:
-            _done ? (_doneDate ?? DateTime.now()) : null,
-        doneBy: _doneByController.text.trim(),
-        lastModifiedBy: currentUser?.id ?? '',
-        photoUrl: photoUrl,
-        photoLocalPath: _photoLocalPath ?? '',
-        plannedDate: _plannedDate,
-        syncStatus:
-            _isEditing ? 'pending_update' : 'pending_create',
-      );
+      final taskId = widget.task?.id ?? const Uuid().v4();
+      final photoUrl = await _uploadPhotoIfNeeded(taskId);
+      final task = await _buildTaskModel(photoUrl);
 
       if (_isEditing) {
-        await _recordChanges(
-            widget.task!,
-            task,
-            currentUser?.id ?? '',
-            currentUser?.nomComplet ?? '');
-        await _localDb.updateTask(task);
+        await _updateExistingTask(task);
       } else {
-        await _localDb.insertTask(task);
-        await _localDb.insertHistory(TaskHistoryModel(
-          taskId: taskId,
-          champModifie: 'creation',
-          ancienneValeur: '',
-          nouvelleValeur: 'Tâche créée',
-          modifiedBy: currentUser?.id ?? '',
-          modifiedByName: currentUser?.nomComplet ?? '',
-          syncStatus: 'pending_create',
-        ));
+        await _createNewTask(task);
       }
 
-      // Notifications
-      if (_done && !(widget.task?.done ?? false)) {
-        final users = await _localDb.getAllUsers();
-        for (var user in users) {
-          if (user.isAdmin && !user.archived) {
-            await NotificationService().notifyTaskDone(
-              user.id,
-              task.description,
-              _doneByController.text.trim(),
-            );
-          }
-        }
-      }
+      await _sendNotificationsIfNeeded(task);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_isEditing
-                ? '✅ Tâche modifiée'
-                : '✅ Tâche #$taskNumber créée'),
-            backgroundColor: AppTheme.successColor,
-          ),
+        _showSnackBar(
+          _isEditing
+              ? '✅ Tâche modifiée'
+              : '✅ Tâche #${task.taskNumber} créée',
         );
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Erreur: $e'),
-            backgroundColor: AppTheme.errorColor,
-          ),
-        );
+        _showSnackBar('❌ Erreur: $e', isError: true);
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
   }
 
+  // ============================================
+  // HISTORIQUE DES MODIFICATIONS
+  // ============================================
+
   Future<void> _recordChanges(
-      TaskModel oldTask,
-      TaskModel newTask,
-      String modifiedBy,
-      String modifiedByName) async {
+    TaskModel oldTask,
+    TaskModel newTask,
+    String modifiedBy,
+    String modifiedByName,
+  ) async {
     final changes = <MapEntry<String, List<String>>>[];
 
     if (oldTask.immeuble != newTask.immeuble) {
@@ -450,38 +473,41 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           'immeuble', [oldTask.immeuble, newTask.immeuble]));
     }
     if (oldTask.etage != newTask.etage) {
-      changes.add(
-          MapEntry('etage', [oldTask.etage, newTask.etage]));
+      changes
+          .add(MapEntry('etage', [oldTask.etage, newTask.etage]));
     }
     if (oldTask.chambre != newTask.chambre) {
-      changes.add(MapEntry(
-          'chambre', [oldTask.chambre, newTask.chambre]));
+      changes.add(
+          MapEntry('chambre', [oldTask.chambre, newTask.chambre]));
     }
     if (oldTask.description != newTask.description) {
-      changes.add(MapEntry('description',
-          [oldTask.description, newTask.description]));
+      changes.add(MapEntry(
+          'description', [oldTask.description, newTask.description]));
     }
     if (oldTask.done != newTask.done) {
-      changes.add(MapEntry('done',
-          [oldTask.done.toString(), newTask.done.toString()]));
+      changes.add(MapEntry(
+          'done', [oldTask.done.toString(), newTask.done.toString()]));
     }
     if (oldTask.doneBy != newTask.doneBy) {
-      changes.add(MapEntry(
-          'done_by', [oldTask.doneBy, newTask.doneBy]));
+      changes.add(
+          MapEntry('done_by', [oldTask.doneBy, newTask.doneBy]));
     }
     if (oldTask.photoUrl != newTask.photoUrl) {
       changes.add(MapEntry('photo_url', [
         oldTask.photoUrl.isNotEmpty ? 'Photo existante' : '',
         newTask.photoUrl.isNotEmpty
             ? 'Nouvelle photo'
-            : 'Photo supprimée'
+            : 'Photo supprimée',
       ]));
     }
-    if (oldTask.plannedDate?.toString() !=
-        newTask.plannedDate?.toString()) {
+    if (oldTask.plannedDate != newTask.plannedDate) {
       changes.add(MapEntry('planned_date', [
-        oldTask.plannedDate?.toString() ?? '',
-        newTask.plannedDate?.toString() ?? ''
+        oldTask.plannedDate != null
+            ? DateFormat('dd/MM/yyyy').format(oldTask.plannedDate!)
+            : 'Non définie',
+        newTask.plannedDate != null
+            ? DateFormat('dd/MM/yyyy').format(newTask.plannedDate!)
+            : 'Non définie',
       ]));
     }
 
@@ -498,18 +524,112 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     }
   }
 
-  bool get _hasPhoto {
-    return (_photoLocalPath != null &&
-            _photoLocalPath!.isNotEmpty) ||
-        (_photoUrl != null && _photoUrl!.isNotEmpty);
+  // ============================================
+  // UTILITAIRES UI
+  // ============================================
+
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor:
+            isError ? AppTheme.errorColor : AppTheme.successColor,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
+
+  // ============================================
+  // WIDGET — Aperçu photo (factorisé)
+  // ============================================
+
+  Widget _buildPhotoPreview() {
+    final Widget imageWidget;
+
+    if (_photoLocalPath != null && _photoLocalPath!.isNotEmpty) {
+      imageWidget = Image.file(
+        File(_photoLocalPath!),
+        height: 200,
+        width: double.infinity,
+        fit: BoxFit.cover,
+      );
+    } else if (_photoUrl != null && _photoUrl!.isNotEmpty) {
+      imageWidget = Image.network(
+        _photoUrl!,
+        height: 200,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const SizedBox(
+          height: 200,
+          child: Center(
+            child: Icon(Icons.broken_image,
+                size: 60, color: AppTheme.textSecondary),
+          ),
+        ),
+      );
+    } else {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: imageWidget,
+          ),
+          Positioned(
+            bottom: 8,
+            right: 8,
+            child: _buildDeletePhotoButton(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDeletePhotoButton() {
+    return GestureDetector(
+      onTap: _removePhoto,
+      child: Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: AppTheme.errorColor,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: const Icon(
+          Icons.close,
+          color: Colors.white,
+          size: 20,
+        ),
+      ),
+    );
+  }
+
+  // ============================================
+  // BUILD PRINCIPAL
+  // ============================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-            _isEditing ? 'Modifier la tâche' : 'Nouvelle tâche'),
+          _isEditing && widget.task!.taskNumber != null
+              ? 'Modifier la tâche #${widget.task!.taskNumber}'
+              : _isEditing
+                  ? 'Modifier la tâche'
+                  : 'Ajouter une tâche',
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -532,8 +652,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                         prefixIcon: Icon(Icons.apartment),
                       ),
                       isExpanded: true,
-                      hint: const Text(
-                          'Sélectionner un immeuble'),
+                      hint: const Text('Sélectionner un immeuble'),
                       items: _immeubles.map((immeuble) {
                         return DropdownMenuItem<String>(
                           value: immeuble.nom,
@@ -554,17 +673,13 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Bouton ajouter un immeuble (admin seulement)
                   if (_auth.isAdmin)
                     Padding(
-                      padding:
-                          const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.only(top: 8),
                       child: IconButton(
                         onPressed: _showAddImmeubleDialog,
                         icon: const Icon(Icons.add_circle,
-                            color:
-                                AppTheme.secondaryColor,
-                            size: 32),
+                            color: AppTheme.secondaryColor, size: 32),
                         tooltip: 'Ajouter un immeuble',
                       ),
                     ),
@@ -573,15 +688,16 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
               const SizedBox(height: 16),
 
-              // Étage et chambre
+              // ============================================
+              // ÉTAGE ET CHAMBRE
+              // ============================================
               Row(
                 children: [
                   Expanded(
                     child: AppTextField(
                       controller: _etageController,
                       labelText: 'Étage',
-                      prefixIcon:
-                          const Icon(Icons.layers),
+                      prefixIcon: const Icon(Icons.layers),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -589,8 +705,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     child: AppTextField(
                       controller: _chambreController,
                       labelText: 'Chambre',
-                      prefixIcon: const Icon(
-                          Icons.door_front_door),
+                      prefixIcon: const Icon(Icons.door_front_door),
                     ),
                   ),
                 ],
@@ -598,16 +713,16 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
               const SizedBox(height: 16),
 
-              // Description
+              // ============================================
+              // DESCRIPTION
+              // ============================================
               AppTextField(
                 controller: _descriptionController,
                 maxLines: 4,
                 labelText: 'Description de la tâche *',
-                prefixIcon:
-                    const Icon(Icons.description),
+                prefixIcon: const Icon(Icons.description),
                 validator: (value) {
-                  if (value == null ||
-                      value.trim().isEmpty) {
+                  if (value == null || value.trim().isEmpty) {
                     return 'Veuillez entrer une description';
                   }
                   return null;
@@ -616,36 +731,32 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
               const SizedBox(height: 16),
 
-              // Date planifiée
+              // ============================================
+              // DATE PLANIFIÉE
+              // ============================================
               Card(
                 child: ListTile(
-                  leading: const Icon(
-                      Icons.calendar_today,
+                  leading: const Icon(Icons.calendar_today,
                       color: AppTheme.warningColor),
                   title: const Text('Date planifiée'),
                   subtitle: Text(
                     _plannedDate != null
-                        ? DateFormat('dd/MM/yyyy')
-                            .format(_plannedDate!)
+                        ? DateFormat('dd/MM/yyyy').format(_plannedDate!)
                         : 'Non définie',
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        icon: const Icon(
-                            Icons.edit_calendar),
-                        onPressed: () =>
-                            _selectDate(true),
+                        icon: const Icon(Icons.edit_calendar),
+                        onPressed: () => _selectDate(true),
                       ),
                       if (_plannedDate != null)
                         IconButton(
                           icon: const Icon(Icons.clear,
-                              color:
-                                  AppTheme.errorColor),
+                              color: AppTheme.errorColor),
                           onPressed: () {
-                            setState(() =>
-                                _plannedDate = null);
+                            setState(() => _plannedDate = null);
                           },
                         ),
                     ],
@@ -655,24 +766,22 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
               const SizedBox(height: 16),
 
-              // Statut fait/pas fait
+              // ============================================
+              // STATUT FAIT / PAS FAIT
+              // ============================================
               Card(
                 child: SwitchListTile(
                   secondary: Icon(
-                    _done
-                        ? Icons.check_circle
-                        : Icons.pending,
+                    _done ? Icons.check_circle : Icons.pending,
                     color: _done
                         ? AppTheme.successColor
                         : AppTheme.warningColor,
                     size: 32,
                   ),
                   title: Text(
-                    _done
-                        ? 'Tâche terminée'
-                        : 'Tâche en cours',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600),
+                    _done ? 'Tâche terminée' : 'Tâche en cours',
+                    style:
+                        const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   value: _done,
                   onChanged: (value) {
@@ -681,9 +790,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                       if (value) {
                         _doneDate = DateTime.now();
                         _doneByController.text =
-                            _auth.currentUser
-                                    ?.nomComplet ??
-                                '';
+                            _auth.currentUser?.nomComplet ?? '';
                       } else {
                         _doneDate = null;
                       }
@@ -692,16 +799,18 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 ),
               ),
 
-              // Si fait : date, exécutant et photo
+              // ============================================
+              // SI FAIT : DATE, EXÉCUTANT, PHOTO
+              // ============================================
               if (_done) ...[
                 const SizedBox(height: 12),
+
+                // Date d'exécution
                 Card(
                   child: ListTile(
-                    leading: const Icon(
-                        Icons.event_available,
+                    leading: const Icon(Icons.event_available,
                         color: AppTheme.successColor),
-                    title: const Text(
-                        'Date d\'exécution'),
+                    title: const Text('Date d\'exécution'),
                     subtitle: Text(
                       _doneDate != null
                           ? DateFormat('dd/MM/yyyy')
@@ -709,41 +818,34 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                           : 'Aujourd\'hui',
                     ),
                     trailing: IconButton(
-                      icon: const Icon(
-                          Icons.edit_calendar),
-                      onPressed: () =>
-                          _selectDate(false),
+                      icon: const Icon(Icons.edit_calendar),
+                      onPressed: () => _selectDate(false),
                     ),
                   ),
                 ),
+
                 const SizedBox(height: 12),
 
+                // Exécutant
                 AppTextField(
                   controller: _doneByController,
                   labelText: 'Exécutant',
-                  prefixIcon:
-                      const Icon(Icons.person),
+                  prefixIcon: const Icon(Icons.person),
                 ),
+
                 const SizedBox(height: 12),
 
-                // ============================================
-                // PHOTO avec bouton supprimer
-                // ============================================
+                // Photo
                 Card(
                   child: Column(
                     children: [
                       ListTile(
-                        leading: const Icon(
-                            Icons.camera_alt,
-                            color:
-                                AppTheme.primaryColor),
-                        title: const Text(
-                            'Photo du travail'),
-                        subtitle: Text(_hasPhoto
-                            ? 'Photo ajoutée'
-                            : 'Optionnel'),
-                        trailing:
-                            ElevatedButton.icon(
+                        leading: const Icon(Icons.camera_alt,
+                            color: AppTheme.primaryColor),
+                        title: const Text('Photo du travail'),
+                        subtitle: Text(
+                            _hasPhoto ? 'Photo ajoutée' : 'Optionnel'),
+                        trailing: ElevatedButton.icon(
                           onPressed: _pickImage,
                           icon: Icon(
                             _hasPhoto
@@ -751,169 +853,11 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                                 : Icons.add_a_photo,
                             size: 18,
                           ),
-                          label: Text(_hasPhoto
-                              ? 'Changer'
-                              : 'Ajouter'),
+                          label: Text(
+                              _hasPhoto ? 'Changer' : 'Ajouter'),
                         ),
                       ),
-                      // Affichage de la photo locale
-                      if (_photoLocalPath != null &&
-                          _photoLocalPath!
-                              .isNotEmpty) ...[
-                        Padding(
-                          padding:
-                              const EdgeInsets
-                                  .fromLTRB(
-                                  12, 0, 12, 12),
-                          child: Stack(
-                            children: [
-                              ClipRRect(
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(8),
-                                child: Image.file(
-                                  File(
-                                      _photoLocalPath!),
-                                  height: 200,
-                                  width:
-                                      double.infinity,
-                                  fit: BoxFit.cover,
-                                ),
-                              ),
-                              // Bouton supprimer
-                              Positioned(
-                                bottom: 8,
-                                right: 8,
-                                child:
-                                    GestureDetector(
-                                  onTap:
-                                      _removePhoto,
-                                  child: Container(
-                                    padding:
-                                        const EdgeInsets
-                                            .all(6),
-                                    decoration:
-                                        BoxDecoration(
-                                      color: AppTheme
-                                          .errorColor,
-                                      shape: BoxShape
-                                          .circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors
-                                              .black
-                                              .withValues(
-                                                  alpha:
-                                                      77),
-                                          blurRadius:
-                                              4,
-                                          offset:
-                                              const Offset(
-                                                  0,
-                                                  2),
-                                        ),
-                                      ],
-                                    ),
-                                    child:
-                                        const Icon(
-                                      Icons.close,
-                                      color: Colors
-                                          .white,
-                                      size: 20,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ]
-                      // Affichage de la photo depuis URL
-                      else if (_photoUrl != null &&
-                          _photoUrl!
-                              .isNotEmpty) ...[
-                        Padding(
-                          padding:
-                              const EdgeInsets
-                                  .fromLTRB(
-                                  12, 0, 12, 12),
-                          child: Stack(
-                            children: [
-                              ClipRRect(
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(8),
-                                child:
-                                    Image.network(
-                                  _photoUrl!,
-                                  height: 200,
-                                  width:
-                                      double.infinity,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_,
-                                          __,
-                                          ___) =>
-                                      const SizedBox(
-                                    height: 200,
-                                    child: Center(
-                                      child: Icon(
-                                          Icons
-                                              .broken_image,
-                                          size: 60,
-                                          color: AppTheme
-                                              .textSecondary),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              // Bouton supprimer
-                              Positioned(
-                                bottom: 8,
-                                right: 8,
-                                child:
-                                    GestureDetector(
-                                  onTap:
-                                      _removePhoto,
-                                  child: Container(
-                                    padding:
-                                        const EdgeInsets
-                                            .all(6),
-                                    decoration:
-                                        BoxDecoration(
-                                      color: AppTheme
-                                          .errorColor,
-                                      shape: BoxShape
-                                          .circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors
-                                              .black
-                                              .withValues(
-                                                  alpha:
-                                                      77),
-                                          blurRadius:
-                                              4,
-                                          offset:
-                                              const Offset(
-                                                  0,
-                                                  2),
-                                        ),
-                                      ],
-                                    ),
-                                    child:
-                                        const Icon(
-                                      Icons.close,
-                                      color: Colors
-                                          .white,
-                                      size: 20,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                      _buildPhotoPreview(),
                     ],
                   ),
                 ),
@@ -921,31 +865,34 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
               const SizedBox(height: 32),
 
-              // Bouton sauvegarder
+              // ============================================
+              // BOUTON SAUVEGARDER
+              // ============================================
               SizedBox(
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton.icon(
-                  onPressed:
-                      _isSaving ? null : _saveTask,
+                  onPressed: _isSaving ? null : _saveTask,
                   icon: _isSaving
                       ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child:
-                              CircularProgressIndicator(
+                          child: CircularProgressIndicator(
                             color: Colors.white,
                             strokeWidth: 2,
                           ),
                         )
                       : const Icon(Icons.save),
-                  label: Text(_isSaving
-                      ? 'Enregistrement...'
-                      : _isEditing
-                          ? 'Modifier la tâche'
-                          : 'Créer la tâche'),
+                  label: Text(
+                    _isSaving
+                        ? 'Enregistrement...'
+                        : _isEditing
+                            ? 'Modifier la tâche'
+                            : 'Créer la tâche',
+                  ),
                 ),
               ),
+
               const SizedBox(height: 20),
             ],
           ),

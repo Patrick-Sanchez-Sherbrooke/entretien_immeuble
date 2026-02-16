@@ -1,0 +1,40 @@
+-----------------------------
+A tester et mettre sur GitHub 
+-----------------------------
+- Quand on modifie une tâche: le titre est "Modifier la tâche". Ajouter le #tâche au titre
+
+-----------------------------
+En cours de modification
+-----------------------------
+- sélection d'un champ: ne pas sélectionner tout le champ mais placer le curseur là où on clique
+- lorsqu'une photo est ajoutée, on ne revient pas sur la page de la tâche!
+- Ajouter une note pour l'exécution de la tâche
+- Ajouter dans les rapports et écrans le créateur de la tâche
+- Modification de tâche: de terminée à en cours: photo+date exécution doit être supprimée
+- Dans la tâche: bouton pour supprimer la photo quand elle existe
+
+-----------------------------
+A faire
+-----------------------------
+- pouvoir effacer la base de données en local et synchroniser avec le serveur
+
+- rapport: demander si on y met aussi les tâches archivées. Si oui, les rapatrier du serveur si elles ne le sont pas déjà et ajouter un critère pour ce status
+
+- Ping automatique sur la base de données pour éviter la pause
+
+- Si erreur de base de données, push pour l'admin
+
+- Faire un push pour les éxécutants quand il y a une nouvelle tâche
+
+- Faire un push aux autres exécutants qd une tâche est terminée
+
+- Ajouter un rôle de planificateur. Il a les mêmes privilèges que les utilisateurs mais ne peut pas exécuter une tâche (de mettre de date d'exécution ni de photo). 
+- L'admin peut assigner un rôle choisi parmis la liste "Administrateur, Planificateur, Exécutant".
+
+- Ajouter un profil utilisateur avec:
+Changement de mot de passe
+
+- Générer un diagramme d'opération
+- Générer un manuel utilisateur
+- Générer un manuel technique
+

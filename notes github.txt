@@ -1,0 +1,12 @@
+Mon GitHub est dans : https://github.com/PatSherbrooke/entretien_immeuble
+
+Pour valider une modification dans GitHub:
+
+Lancer git bash
+faire : 
+cd /d/dev/projets/entretien_immeuble/lib
+
+# Après chaque modification :
+git add .
+git commit -m "description du changement"
+git push
