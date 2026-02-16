@@ -1,0 +1,68 @@
+| ddl                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| CREATE TABLE immeubles (
+  id TEXT NOT NULL,
+  nom TEXT NOT NULL,
+  adresse TEXT DEFAULT ''::text,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| CREATE TABLE pending_notifications (
+  id BIGINT NOT NULL,
+  target_user_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  type TEXT NOT NULL,
+  task_id TEXT,
+  is_read BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);                                                                                                                                                                                                                                                                                                                |
+| CREATE TABLE profiles (
+  id TEXT NOT NULL,
+  identifiant TEXT NOT NULL,
+  mot_de_passe_hash TEXT NOT NULL,
+  nom TEXT NOT NULL,
+  prenom TEXT NOT NULL,
+  telephone TEXT DEFAULT ''::text,
+  email TEXT DEFAULT ''::text,
+  role TEXT NOT NULL DEFAULT 'executant'::text,
+  archived BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);                                                                                                                                                             |
+| CREATE TABLE task_history (
+  id BIGINT NOT NULL,
+  task_id TEXT NOT NULL,
+  champ_modifie TEXT NOT NULL,
+  ancienne_valeur TEXT DEFAULT ''::text,
+  nouvelle_valeur TEXT DEFAULT ''::text,
+  modified_by TEXT DEFAULT ''::text,
+  modified_by_name TEXT DEFAULT ''::text,
+  modified_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);                                                                                                                                                                                                                                                   |
+| CREATE TABLE tasks (
+  id TEXT NOT NULL,
+  task_number BIGINT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  immeuble TEXT NOT NULL,
+  etage TEXT DEFAULT ''::text,
+  chambre TEXT DEFAULT ''::text,
+  description TEXT NOT NULL,
+  done BOOLEAN DEFAULT false,
+  done_date TIMESTAMP WITH TIME ZONE,
+  done_by TEXT DEFAULT ''::text,
+  last_modified_by TEXT DEFAULT ''::text,
+  photo_url TEXT DEFAULT ''::text,
+  planned_date DATE,
+  deleted BOOLEAN DEFAULT false,
+  archived BOOLEAN DEFAULT false
+); |
+| CREATE UNIQUE INDEX immeubles_nom_key ON public.immeubles USING btree (nom);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| CREATE UNIQUE INDEX profiles_identifiant_key ON public.profiles USING btree (identifiant);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ALTER TABLE immeubles ADD CONSTRAINT immeubles_nom_key UNIQUE (nom);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ALTER TABLE immeubles ADD CONSTRAINT immeubles_pkey PRIMARY KEY (id);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ALTER TABLE pending_notifications ADD CONSTRAINT pending_notifications_pkey PRIMARY KEY (id);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ALTER TABLE profiles ADD CONSTRAINT profiles_identifiant_key UNIQUE (identifiant);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ALTER TABLE profiles ADD CONSTRAINT profiles_pkey PRIMARY KEY (id);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ALTER TABLE task_history ADD CONSTRAINT task_history_pkey PRIMARY KEY (id);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ALTER TABLE tasks ADD CONSTRAINT tasks_pkey PRIMARY KEY (id);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
