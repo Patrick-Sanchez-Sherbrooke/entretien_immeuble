@@ -1,0 +1,428 @@
+{
+  "@@locale": "fr",
+  "appTitle": "Entretien Immeuble",
+  "loginTitle": "Entretien des résidences",
+  "loginSubtitle": "Connectez-vous pour continuer",
+  "loginErrorBadCredentials": "Identifiant ou mot de passe incorrect",
+  "loginErrorNetwork": "Erreur de connexion. Vérifiez votre réseau.",
+  "identifiant": "Identifiant",
+  "pleaseEnterIdentifiant": "Veuillez entrer votre identifiant",
+  "motDePasse": "Mot de passe",
+  "pleaseEnterPassword": "Veuillez entrer votre mot de passe",
+  "seConnecter": "Se connecter",
+  "splashTitle": "Entretien Immeuble",
+  "home": "Accueil",
+  "sync": "Synchroniser",
+  "bonjour": "Bonjour {name} !",
+  "@bonjour": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "roleAdmin": "👑 Administrateur",
+  "rolePlanificateur": "🗓 Planificateur",
+  "roleExecutant": "🔧 Exécutant",
+  "enCours": "En cours",
+  "terminees": "Terminées",
+  "total": "Total",
+  "accesRapide": "Accès rapide",
+  "nouvelleTache": "Nouvelle\ntâche",
+  "listeDesTaches": "Liste des\ntâches",
+  "calendrier": "Calendrier",
+  "rapports": "Rapports",
+  "drawerUser": "Utilisateur",
+  "drawerVersion": "V 1.0",
+  "archives": "Archives",
+  "profil": "Profil",
+  "gestionImmeubles": "Gestion des immeubles",
+  "gestionUtilisateurs": "Gestion des utilisateurs",
+  "support": "Support",
+  "deconnexion": "Déconnexion",
+  "annuler": "Annuler",
+  "modifier": "Modifier",
+  "supprimer": "Supprimer",
+  "archiver": "Archiver",
+  "desarchiver": "Désarchiver",
+  "enregistrer": "Enregistrer",
+  "langue": "Langue",
+  "francais": "Français",
+  "anglais": "English",
+  "espagnol": "Espagnol",
+  "pasDeConnexion": "Pas de connexion internet",
+  "erreur": "Erreur",
+  "erreurPrefix": "Erreur: ",
+  "erreurDb": "Erreur base de données: {msg}",
+  "@erreurDb": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "storageErrorTitle": "Problème de stockage",
+  "storageErrorMessage": "L'application ne peut pas accéder au stockage local (données ou préférences). Libérez de l'espace ou réinstallez l'app.",
+  "storageErrorContactSupport": "Souhaitez-vous contacter le support par email ?",
+  "storageErrorContactSupportButton": "Envoyer un email",
+  "storageErrorPrefsFailed": "Impossible d'accéder aux préférences. Les paramètres par défaut sont utilisés.",
+  "profilEnregistre": "✅ Profil enregistré",
+  "profilEnregistreLocalDistant": "✅ Profil enregistré en local. Distant : {msg}",
+  "@profilEnregistreLocalDistant": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "nom": "Nom",
+  "prenom": "Prénom",
+  "telephone": "Téléphone",
+  "email": "Email",
+  "motDePasseOptionnel": "Nouveau mot de passe (laisser vide pour ne pas changer)",
+  "immeuble": "Immeuble",
+  "immeubleRequired": "Immeuble *",
+  "selectionnerImmeuble": "Sélectionner un immeuble",
+  "veuillezSelectionnerImmeuble": "Veuillez sélectionner un immeuble",
+  "etage": "Étage",
+  "chambre": "Chambre",
+  "chambreShort": "Ch. {num}",
+  "@chambreShort": {
+    "placeholders": {
+      "num": {}
+    }
+  },
+  "descriptionTache": "Description de la tâche *",
+  "veuillezEntrerDescription": "Veuillez entrer une description",
+  "datePlanifiee": "Date planifiée",
+  "nonDefinie": "Non définie",
+  "tacheTerminee": "Tâche terminée",
+  "tacheEnCours": "Tâche en cours",
+  "planificateurNePeutPasCloturer": "Le planificateur ne peut pas clôturer une tâche",
+  "faitLe": "Fait le",
+  "executePar": "Exécuté par",
+  "noteExecution": "Note d'exécution",
+  "ajouterUneTache": "Ajouter une tâche",
+  "modifierLaTache": "Modifier la tâche",
+  "modifierLaTacheNum": "Modifier la tâche #{num}",
+  "@modifierLaTacheNum": {
+    "placeholders": {
+      "num": {}
+    }
+  },
+  "photo": "Photo",
+  "ajouterPhoto": "Ajouter une photo",
+  "supprimerPhoto": "Supprimer",
+  "tacheCreee": "✅ Tâche #{num} créée",
+  "@tacheCreee": {
+    "placeholders": {
+      "num": {}
+    }
+  },
+  "tacheModifiee": "✅ Tâche modifiée",
+  "tacheEnregistreeSyncAuRetour": "Tâche enregistrée. Synchronisation (photo comprise) au retour du réseau.",
+  "tacheCreeeOuModifieeDistant": "{msg} (distant : {syncError})",
+  "@tacheCreeeOuModifieeDistant": {
+    "placeholders": {
+      "msg": {},
+      "syncError": {}
+    }
+  },
+  "datePlanificationPosterieure": "❌ La date de planification doit être postérieure à la date du jour",
+  "listeTaches": "Liste des tâches",
+  "filtreImmeuble": "Immeuble",
+  "toutes": "Toutes",
+  "actifs": "Actifs",
+  "supprimerTacheConfirm": "Supprimer la tâche ?",
+  "supprimerTacheConfirmContent": "Voulez-vous vraiment supprimer la tâche {num} ?\n\n\"{desc}\"",
+  "@supprimerTacheConfirmContent": {
+    "placeholders": {
+      "num": {},
+      "desc": {}
+    }
+  },
+  "archiverTacheConfirm": "Archiver la tâche ?",
+  "archiverTacheConfirmContent": "Voulez-vous archiver la tâche {num} ?\n\n\"{desc}\"",
+  "@archiverTacheConfirmContent": {
+    "placeholders": {
+      "num": {},
+      "desc": {}
+    }
+  },
+  "tacheSupprimee": "🗑️ Tâche supprimée",
+  "tacheSupprimeeDistant": "🗑️ Tâche supprimée (distant : {msg})",
+  "@tacheSupprimeeDistant": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "tacheArchivee": "📦 Tâche archivée",
+  "tacheArchiveeDistant": "📦 Tâche archivée (distant : {msg})",
+  "@tacheArchiveeDistant": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "aucuneTache": "Aucune tâche",
+  "tache": "Tâche {num}",
+  "@tache": {
+    "placeholders": {
+      "num": {}
+    }
+  },
+  "historique": "Historique",
+  "detailTache": "Tâche {num}",
+  "@detailTache": {
+    "placeholders": {
+      "num": {}
+    }
+  },
+  "historiqueModifications": "Historique des modifications",
+  "aucuneTachePlanifiee": "Aucune tâche planifiée ce jour",
+  "tachesCount": "{count} tâche(s)",
+  "@tachesCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "archiverImmeubleConfirm": "Archiver l'immeuble ?",
+  "desarchiverImmeubleConfirm": "Désarchiver l'immeuble ?",
+  "archiverImmeubleQuestion": "Voulez-vous archiver « {nom} » ?",
+  "@archiverImmeubleQuestion": {
+    "placeholders": {
+      "nom": {}
+    }
+  },
+  "desarchiverImmeubleQuestion": "Voulez-vous désarchiver « {nom} » ?",
+  "@desarchiverImmeubleQuestion": {
+    "placeholders": {
+      "nom": {}
+    }
+  },
+  "immeubleArchive": "📦 Immeuble archivé",
+  "immeubleDesarchive": "✅ Immeuble désarchivé",
+  "immeubleModifie": "✅ Immeuble modifié",
+  "immeubleAjoute": "✅ Immeuble ajouté",
+  "immeubleModifieLocalDistant": "✅ Immeuble modifié en local. Distant : {msg}",
+  "@immeubleModifieLocalDistant": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "immeubleAjouteLocalDistant": "✅ Immeuble ajouté en local. Distant : {msg}",
+  "@immeubleAjouteLocalDistant": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "nouvelImmeuble": "Nouvel immeuble",
+  "modifierImmeuble": "Modifier l'immeuble",
+  "adresse": "Adresse",
+  "gestionDesImmeubles": "Gestion des immeubles",
+  "archiverUtilisateurConfirm": "Archiver l'utilisateur ?",
+  "desarchiverUtilisateurConfirm": "Désarchiver l'utilisateur ?",
+  "archiverUtilisateurQuestion": "Voulez-vous archiver {name} ?",
+  "@archiverUtilisateurQuestion": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "desarchiverUtilisateurQuestion": "Voulez-vous désarchiver {name} ?",
+  "@desarchiverUtilisateurQuestion": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "utilisateurArchive": "📦 Utilisateur archivé",
+  "utilisateurDesarchive": "✅ Utilisateur désarchivé",
+  "utilisateurArchiveDistant": "📦 Utilisateur archivé (distant : {msg})",
+  "@utilisateurArchiveDistant": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "utilisateurDesarchiveDistant": "✅ Utilisateur désarchivé (distant : {msg})",
+  "@utilisateurDesarchiveDistant": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "gestionDesUtilisateurs": "Gestion des utilisateurs",
+  "nouvelUtilisateur": "Nouvel utilisateur",
+  "modifierUtilisateur": "Modifier l'utilisateur",
+  "role": "Rôle",
+  "administrateur": "Administrateur",
+  "planificateur": "Planificateur",
+  "executant": "Exécutant",
+  "motDePasseObligatoireCreation": "Le mot de passe est obligatoire pour la création",
+  "responsableInformatique": "Responsable informatique",
+  "supportDbErrorInfo": "En cas d'erreur de base de données, un email pourra être envoyé à cette adresse avec le détail de l'erreur.",
+  "syncSuccess": "✅ {msg}",
+  "@syncSuccess": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "syncSuccessCount": "✅ {count} éléments synchronisés",
+  "@syncSuccessCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "syncWarning": "⚠️ {msg}",
+  "@syncWarning": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "syncError": "❌ {msg}",
+  "@syncError": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "synchronisation": "Synchronisation: {msg}",
+  "@synchronisation": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "delaiDepasse": "Délai dépassé",
+  "syncInterrompue": "Synchronisation interrompue (délai dépassé)",
+  "rapportsTitre": "Rapports",
+  "dateCreation": "Date création",
+  "dateExecution": "Date exéc.",
+  "executantLabel": "Exécutant",
+  "rechercher": "Rechercher",
+  "genererPdf": "Générer le PDF",
+  "partager": "Partager",
+  "aucunResultat": "Aucun résultat",
+  "sessionExpiree": "Session expirée",
+  "enregistreLocalSync": "Enregistré en local. Sync serveur : {msg}",
+  "@enregistreLocalSync": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "planifieeLe": "Planifiée le : {date}",
+  "@planifieeLe": {
+    "placeholders": {
+      "date": {}
+    }
+  },
+  "etageLabel": "Étage {num}",
+  "@etageLabel": {
+    "placeholders": {
+      "num": {}
+    }
+  },
+  "monProfil": "Mon profil",
+  "nomRequired": "Nom *",
+  "prenomRequired": "Prénom *",
+  "veuillezEntrerNom": "Veuillez entrer le nom",
+  "veuillezEntrerPrenom": "Veuillez entrer le prénom",
+  "min4Caracteres": "Minimum 4 caractères",
+  "enregistrement": "Enregistrement...",
+  "distantLabel": "distant",
+  "aucunUtilisateur": "Aucun utilisateur",
+  "exNom": "Ex: Résidence Les Lilas",
+  "exAdresse": "Ex: 12 rue des Fleurs",
+  "aucunImmeuble": "Aucun immeuble",
+  "voirHistorique": "Voir l'historique",
+  "aucuneModificationEnregistree": "Aucune modification enregistrée",
+  "tousLesImmeubles": "Tous les immeubles",
+  "creeeLe": "Créée le : {date}",
+  "@creeeLe": {
+    "placeholders": {
+      "date": {}
+    }
+  },
+  "termineeLe": "Terminée le : {date}",
+  "@termineeLe": {
+    "placeholders": {
+      "date": {}
+    }
+  },
+  "statusArchivee": "Archivée",
+  "statusArchivees": "Archivées",
+  "aujourdHui": "Aujourd'hui",
+  "photoTravail": "Photo du travail",
+  "photoAjoutee": "Photo ajoutée",
+  "optionnel": "Optionnel",
+  "changer": "Changer",
+  "ajouter": "Ajouter",
+  "creerLaTache": "Créer la tâche",
+  "dateExecutionLong": "Date d'exécution",
+  "dateCreationDetail": "Date de création",
+  "dateEtHeure": "{date} à {time}",
+  "@dateEtHeure": {
+    "placeholders": {
+      "date": {},
+      "time": {}
+    }
+  },
+  "execution": "Exécution",
+  "statut": "Statut",
+  "archivage": "Archivage",
+  "parModification": "Par :",
+  "inconnu": "Inconnu",
+  "tacheCreeeSansNum": "Tâche créée",
+  "photoExistante": "Photo existante",
+  "nouvellePhoto": "Nouvelle photo",
+  "photoSupprimee": "Photo supprimée",
+  "description": "Description",
+  "tachesArchiveesCount": "{count} tâche(s) archivée(s)",
+  "@tachesArchiveesCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "desarchiverTacheConfirm": "Désarchiver la tâche ?",
+  "desarchiverTacheQuestion": "Voulez-vous désarchiver la tâche {num} ?\n\n\"{desc}\"",
+  "@desarchiverTacheQuestion": {
+    "placeholders": {
+      "num": {},
+      "desc": {}
+    }
+  },
+  "tacheDesarchiveeRestore": "✅ Tâche désarchivée et restaurée dans la liste",
+  "filtres": "Filtres",
+  "filtresEtTri": "Filtres et tri",
+  "reinitialiser": "Réinitialiser",
+  "appliquer": "Appliquer",
+  "dateModif": "Date modif.",
+  "ordre": "Ordre :",
+  "croissant": "Croissant ↑",
+  "decroissant": "Décroissant ↓",
+  "aucuneTacheArchivee": "Aucune tâche archivée",
+  "reessayer": "Réessayer",
+  "erreurChargement": "Erreur de chargement : {msg}",
+  "@erreurChargement": {
+    "placeholders": {
+      "msg": {}
+    }
+  },
+  "pasDeConnexionArchives": "Pas de connexion internet.\nLes archives sont stockées sur le serveur distant.",
+  "trierPar": "Trier par :",
+  "ajouterCriterTri": "Ajouter un critère de tri",
+  "genererRapport": "Générer le rapport",
+  "chargement": "Chargement...",
+  "croissantShort": "Croissant",
+  "decroissantShort": "Décroissant",
+  "retirerCriterTri": "Retirer ce critère",
+  "statutLabel": "Statut :",
+  "resultatsCount": "{count} résultat(s)",
+  "@resultatsCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "partagerEmail": "Partager par email",
+  "imprimer": "Imprimer",
+  "identifiantRequired": "Identifiant *",
+  "seraUtiliseConnexion": "Sera utilisé pour la connexion",
+  "veuillezEntrerIdentifiant": "Veuillez entrer un identifiant",
+  "min3Caracteres": "Minimum 3 caractères",
+  "veuillezEntrerMotDePasse": "Veuillez entrer un mot de passe",
+  "roleUtilisateur": "Rôle de l'utilisateur",
+  "descriptionRoleExecutant": "Peut voir et exécuter les tâches",
+  "descriptionRolePlanificateur": "Peut créer et planifier les tâches, mais pas les exécuter",
+  "descriptionRoleAdmin": "Accès complet à l'application",
+  "creerUtilisateur": "Créer l'utilisateur",
+  "utilisateurModifie": "✅ Utilisateur modifié",
+  "utilisateurCree": "✅ Utilisateur créé"
+}

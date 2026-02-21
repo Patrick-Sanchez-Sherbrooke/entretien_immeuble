@@ -3,6 +3,8 @@
 // ÉCRAN LISTE DES TÂCHES AVEC FILTRES
 // ============================================
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
 import '../models/task_model.dart';
 import '../models/immeuble_model.dart';
 import '../services/local_db_service.dart';
@@ -10,13 +12,17 @@ import '../services/supabase_service.dart';
 import '../services/sync_service.dart';
 import '../services/auth_service.dart';
 import '../utils/theme.dart';
+import '../utils/error_util.dart';
 import '../widgets/app_drawer.dart';
 import '../widgets/task_card.dart';
 import 'task_form_screen.dart';
 import 'task_detail_screen.dart';
 
 class TaskListScreen extends StatefulWidget {
-  const TaskListScreen({super.key});
+  /// Filtre initial au chargement : 'en_cours', 'terminee', ou 'toutes'
+  final String? initialStatusFilter;
+
+  const TaskListScreen({super.key, this.initialStatusFilter});
 
   @override
   State<TaskListScreen> createState() =>
@@ -34,35 +40,51 @@ class _TaskListScreenState extends State<TaskListScreen> {
   // Liste des immeubles
   List<ImmeubleModel> _immeubles = [];
   String? _selectedImmeuble;
+  Map<String, ImmeubleModel> _immeubleById = {};
+  Map<String, String> _userNamesById = {};
 
   // Filtres
-  String _statusFilter = 'en_cours';
+  late String _statusFilter;
 
   @override
   void initState() {
     super.initState();
+    _statusFilter = widget.initialStatusFilter ?? 'en_cours';
     _loadImmeubles();
+    _loadUsers();
     _loadTasks();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _restoreEditFormIfReopened());
+  }
+
+  /// Si l'app a été recréée (ex. retour de la caméra sur Android), rouvre le formulaire d'édition.
+  Future<void> _restoreEditFormIfReopened() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final taskId = prefs.getString(TaskFormScreen.kPendingEditTaskIdKey);
+      if (taskId == null || taskId.isEmpty || !mounted) return;
+      prefs.remove(TaskFormScreen.kPendingEditTaskIdKey);
+      final task = await _localDb.getTaskById(taskId);
+      if (task != null && mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TaskFormScreen(task: task),
+          ),
+        ).then((_) => _loadTasks());
+      }
+    } catch (_) {
+      // Préférences inaccessibles.
+    }
   }
 
   Future<void> _loadImmeubles() async {
-    // Extraire les immeubles des tâches existantes
-    try {
-      final tasks = await _localDb.getActiveTasks();
-      for (var task in tasks) {
-        if (task.immeuble.isNotEmpty) {
-          await _localDb
-              .insertImmeubleIfNotExists(task.immeuble);
-        }
-      }
-    } catch (e) {
-      // Ignorer
-    }
-
     final immeubles = await _localDb.getActiveImmeubles();
     if (mounted) {
       setState(() {
         _immeubles = immeubles;
+        _immeubleById = {
+          for (final i in immeubles) i.id: i,
+        };
       });
     }
   }
@@ -79,6 +101,17 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+  Future<void> _loadUsers() async {
+    final users = await _localDb.getAllUsers();
+    if (mounted) {
+      setState(() {
+        _userNamesById = {
+          for (final u in users) u.id: u.nomComplet,
+        };
+      });
+    }
+  }
+
   void _applyFilters() {
     setState(() {
       _filteredTasks = _allTasks.where((task) {
@@ -88,6 +121,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
         } else if (_statusFilter == 'terminee') {
           statusMatch = task.done;
         }
+        // 'toutes' ou autre : statusMatch reste true
 
         bool immeubleMatch = true;
         if (_selectedImmeuble != null &&
@@ -102,16 +136,17 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   void _showDeleteConfirmation(TaskModel task) {
+    final l10n = AppLocalizations.of(context)!;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Supprimer la tâche ?'),
+        title: Text(l10n.supprimerTacheConfirm),
         content: Text(
-            'Voulez-vous vraiment supprimer la tâche ${task.displayNumber} ?\n\n"${task.description}"'),
+            l10n.supprimerTacheConfirmContent(task.displayNumber, task.description)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler'),
+            child: Text(l10n.annuler),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -120,7 +155,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
               Navigator.pop(context);
               await _deleteTask(task);
             },
-            child: const Text('Supprimer'),
+            child: Text(l10n.supprimer),
           ),
         ],
       ),
@@ -128,41 +163,75 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   Future<void> _deleteTask(TaskModel task) async {
-    final updatedTask = task.copyWith(
-      deleted: true,
-      syncStatus: 'pending_update',
-      lastModifiedBy: _auth.currentUser?.id ?? '',
-    );
-    await _localDb.updateTask(updatedTask);
-    await _loadTasks();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('🗑️ Tâche supprimée'),
-          backgroundColor: AppTheme.errorColor,
+    try {
+      final l10nDelete = AppLocalizations.of(context)!;
+      final updatedTask = task.copyWith(
+        deleted: true,
+        syncStatus: 'pending_update',
+        lastModifiedBy: _auth.currentUser?.id ?? '',
+      );
+      await _localDb.updateTask(updatedTask);
+
+      // Mise à jour immédiate sur Supabase (soft delete)
+      String? syncError;
+      if (await SyncService().hasConnection()) {
+        try {
+          await SupabaseService().upsertTask(
+            updatedTask.copyWith(syncStatus: 'synced'),
+          );
+        } catch (e) {
+          syncError = formatSyncError(e);
+        }
+      } else {
+        syncError = l10nDelete.pasDeConnexion;
+      }
+
+      await _loadTasks();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              syncError == null
+                  ? l10nDelete.tacheSupprimee
+                  : l10nDelete.tacheSupprimeeDistant(syncError),
+            ),
+          backgroundColor: syncError == null
+              ? AppTheme.errorColor
+              : AppTheme.warningColor,
         ),
       );
+    }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${AppLocalizations.of(context)!.erreurPrefix}$e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
     }
   }
 
   void _showArchiveConfirmation(TaskModel task) {
+    final l10n = AppLocalizations.of(context)!;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Archiver la tâche ?'),
+        title: Text(l10n.archiverTacheConfirm),
         content: Text(
-            'Voulez-vous archiver la tâche ${task.displayNumber} ?\n\n"${task.description}"'),
+            l10n.archiverTacheConfirmContent(task.displayNumber, task.description)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler'),
+            child: Text(l10n.annuler),
           ),
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(context);
               await _archiveTask(task);
             },
-            child: const Text('Archiver'),
+            child: Text(l10n.archiver),
           ),
         ],
       ),
@@ -170,33 +239,55 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   Future<void> _archiveTask(TaskModel task) async {
-    final updatedTask = task.copyWith(
-      archived: true,
-      syncStatus: 'pending_update',
-      lastModifiedBy: _auth.currentUser?.id ?? '',
-    );
+    try {
+      final l10nArchive = AppLocalizations.of(context)!;
+      final updatedTask = task.copyWith(
+        archived: true,
+        syncStatus: 'pending_update',
+        lastModifiedBy: _auth.currentUser?.id ?? '',
+      );
 
-    await _localDb.updateTask(updatedTask);
+      await _localDb.updateTask(updatedTask);
 
-    if (await SyncService().hasConnection()) {
-      try {
-        await SupabaseService().upsertTask(
-            updatedTask.copyWith(syncStatus: 'synced'));
-        await _localDb.deleteTask(task.id);
-      } catch (e) {
-        // En cas d'erreur, elle reste en local avec pending_update
+      String? syncError;
+      if (await SyncService().hasConnection()) {
+        try {
+          await SupabaseService().upsertTask(
+              updatedTask.copyWith(syncStatus: 'synced'));
+          await _localDb.deleteTask(task.id);
+        } catch (e) {
+          syncError = formatSyncError(e);
+          // En cas d'erreur, la tâche reste en local avec pending_update
+        }
+      } else {
+        syncError = l10nArchive.pasDeConnexion;
       }
-    }
 
-    await _loadTasks();
+      await _loadTasks();
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('📦 Tâche archivée'),
-          backgroundColor: AppTheme.archiveColor,
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              syncError == null
+                  ? l10nArchive.tacheArchivee
+                  : l10nArchive.tacheArchiveeDistant(syncError),
+            ),
+          backgroundColor: syncError == null
+              ? AppTheme.archiveColor
+              : AppTheme.warningColor,
         ),
       );
+    }
+  } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${AppLocalizations.of(context)!.erreurPrefix}$e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
     }
   }
 
@@ -236,7 +327,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
         });
         _applyFilters();
       },
-      backgroundColor: color.withValues(alpha: 25),
+      backgroundColor: color.withValues(alpha: 0.1),
       selectedColor: color,
       showCheckmark: false,
       padding: const EdgeInsets.symmetric(
@@ -273,7 +364,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Tâche ${task.displayNumber}',
+              AppLocalizations.of(context)!.tache(task.displayNumber),
               style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold),
@@ -282,7 +373,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ListTile(
               leading: const Icon(Icons.edit,
                   color: AppTheme.primaryColor),
-              title: const Text('Modifier'),
+              title: Text(AppLocalizations.of(context)!.modifier),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
@@ -297,7 +388,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ListTile(
               leading: const Icon(Icons.history,
                   color: AppTheme.warningColor),
-              title: const Text('Voir l\'historique'),
+              title: Text(AppLocalizations.of(context)!.voirHistorique),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
@@ -314,7 +405,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
               ListTile(
                 leading: const Icon(Icons.archive,
                     color: AppTheme.archiveColor),
-                title: const Text('Archiver'),
+                title: Text(AppLocalizations.of(context)!.archiver),
                 onTap: () {
                   Navigator.pop(context);
                   _showArchiveConfirmation(task);
@@ -324,7 +415,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ListTile(
               leading: const Icon(Icons.delete,
                   color: AppTheme.errorColor),
-              title: const Text('Supprimer'),
+              title: Text(AppLocalizations.of(context)!.supprimer),
               onTap: () {
                 Navigator.pop(context);
                 _showDeleteConfirmation(task);
@@ -338,11 +429,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final isAdmin = _auth.isAdmin;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Liste des tâches'),
+        title: Text(l10n.listeTaches),
       ),
       drawer: const AppDrawer(),
       floatingActionButton: FloatingActionButton(
@@ -387,7 +479,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         child: Row(
                           children: [
                             _buildStatusChip(
-                              label: 'Actives',
+                              label: l10n.enCours,
                               value: 'en_cours',
                               icon: Icons.pending,
                               color: AppTheme
@@ -396,7 +488,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                             const SizedBox(
                                 width: 6),
                             _buildStatusChip(
-                              label: 'Terminées',
+                              label: l10n.terminees,
                               value: 'terminee',
                               icon: Icons
                                   .check_circle,
@@ -406,7 +498,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                             const SizedBox(
                                 width: 6),
                             _buildStatusChip(
-                              label: 'Toutes',
+                              label: l10n.toutes,
                               value: 'toutes',
                               icon: Icons.list,
                               color: AppTheme
@@ -427,10 +519,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   height: 48,
                   child:
                       DropdownButtonFormField<String>(
-                    value: _selectedImmeuble,
+                    initialValue: _selectedImmeuble,
                     decoration: InputDecoration(
                       hintText:
-                          'Tous les immeubles',
+                          l10n.tousLesImmeubles,
                       hintStyle: const TextStyle(
                           fontSize: 13),
                       prefixIcon: const Icon(
@@ -467,19 +559,17 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     isExpanded: true,
                     isDense: true,
                     items: [
-                      const DropdownMenuItem<
-                          String>(
+                      DropdownMenuItem<String>(
                         value: null,
                         child: Text(
-                            'Tous les immeubles',
-                            style: TextStyle(
+                            l10n.tousLesImmeubles,
+                            style: const TextStyle(
                                 fontSize: 14)),
                       ),
-                      ..._immeubles
-                          .map((immeuble) {
+                      ..._immeubles.map((immeuble) {
                         return DropdownMenuItem<
                             String>(
-                          value: immeuble.nom,
+                          value: immeuble.id,
                           child: Text(
                               immeuble.nom,
                               style:
@@ -510,7 +600,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  '${_filteredTasks.length} tâche(s)',
+                  l10n.tachesCount(_filteredTasks.length),
                   style: const TextStyle(
                     color: AppTheme.textSecondary,
                     fontWeight: FontWeight.w600,
@@ -563,7 +653,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                               color: AppTheme
                                   .textSecondary
                                   .withValues(
-                                      alpha: 77),
+                                      alpha: 0.3),
                             ),
                             const SizedBox(
                                 height: 16),
@@ -587,7 +677,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                               const SizedBox(
                                   height: 8),
                               Text(
-                                'pour "$_selectedImmeuble"',
+                                'pour "${_immeubleById[_selectedImmeuble]?.nom ?? "immeuble inconnu"}"',
                                 style:
                                     const TextStyle(
                                   fontSize: 14,
@@ -614,8 +704,19 @@ class _TaskListScreenState extends State<TaskListScreen> {
                             final task =
                                 _filteredTasks[
                                     index];
+                            final immeubleName =
+                                _immeubleById[task.immeuble]?.nom ??
+                                    task.immeuble;
+                            final createdByName =
+                                (task.createdBy.isNotEmpty)
+                                    ? (_userNamesById[task.createdBy] ?? '')
+                                    : '';
                             return TaskCard(
                               task: task,
+                              immeubleName:
+                                  immeubleName,
+                              createdByName:
+                                  createdByName,
                               onTap: () {
                                 Navigator.push(
                                   context,

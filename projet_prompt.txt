@@ -1,7 +1,0 @@
-Le fichier ci-joint contient tous les fichiers nécessaire au codage d'une application mobile.
-L'environnement utilisé contient les outils flutter, dart, android sdk, visual studio code.
-Il servira aux futures questions que je vais poser
-
-Le lien github https://github.com/PatSherbrooke/entretien_immeuble contient tous les fichiers nécessaire au codage d'une application mobile.
-L'environnement utilisé contient les outils flutter, dart, android sdk, visual studio code.
-Il servira aux futures questions que je vais poser

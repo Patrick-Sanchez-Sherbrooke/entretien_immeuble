@@ -5,6 +5,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
 import '../models/user_model.dart';
 import '../services/local_db_service.dart';
 import '../services/supabase_service.dart';
@@ -12,6 +13,7 @@ import '../services/auth_service.dart';
 import '../services/sync_service.dart';
 import '../utils/constants.dart';
 import '../utils/theme.dart';
+import '../utils/error_util.dart';
 import '../widgets/app_text_field.dart';
 
 class UserFormScreen extends StatefulWidget {
@@ -99,26 +101,45 @@ class _UserFormScreenState extends State<UserFormScreen> {
         updatedAt: DateTime.now(),
       );
 
+      // 1. Enregistrer en base locale (modification validée)
       if (_isEditing) {
         await _localDb.updateUser(user);
       } else {
         await _localDb.insertUser(user);
       }
 
+      // 2. Envoyer sur le serveur après validation de la modification
+      bool syncOk = true;
       if (await SyncService().hasConnection()) {
         try {
-          await _supabase.upsertUser(user);
+          if (_isEditing) {
+            await _supabase.updateUser(user);
+          } else {
+            await _supabase.insertUser(user);
+          }
         } catch (e) {
-          // Sera synchronisé plus tard
+          syncOk = false;
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  AppLocalizations.of(context)!.enregistreLocalSync(formatSyncError(e)),
+                ),
+                backgroundColor: AppTheme.warningColor,
+              ),
+            );
+            Navigator.pop(context, true);
+          }
         }
       }
 
-      if (mounted) {
+      if (mounted && syncOk) {
+        final l10n = AppLocalizations.of(context)!;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(_isEditing
-                ? '✅ Utilisateur modifié'
-                : '✅ Utilisateur créé'),
+                ? l10n.utilisateurModifie
+                : l10n.utilisateurCree),
             backgroundColor: AppTheme.successColor,
           ),
         );
@@ -128,7 +149,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ Erreur: $e'),
+            content: Text('${AppLocalizations.of(context)!.erreurPrefix}${formatSyncError(e)}'),
             backgroundColor: AppTheme.errorColor,
           ),
         );
@@ -143,7 +164,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-            _isEditing ? 'Modifier l\'utilisateur' : 'Nouvel utilisateur'),
+            _isEditing ? AppLocalizations.of(context)!.modifierUtilisateur : AppLocalizations.of(context)!.nouvelUtilisateur),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -155,16 +176,16 @@ class _UserFormScreenState extends State<UserFormScreen> {
               // Identifiant
               AppTextField(
                 controller: _identifiantController,
-                labelText: 'Identifiant *',
+                labelText: AppLocalizations.of(context)!.identifiantRequired,
                 prefixIcon: const Icon(Icons.person),
-                helperText: 'Sera utilisé pour la connexion',
+                helperText: AppLocalizations.of(context)!.seraUtiliseConnexion,
                 enabled: !_isEditing,
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
-                    return 'Veuillez entrer un identifiant';
+                    return AppLocalizations.of(context)!.veuillezEntrerIdentifiant;
                   }
                   if (value.trim().length < 3) {
-                    return 'Minimum 3 caractères';
+                    return AppLocalizations.of(context)!.min3Caracteres;
                   }
                   return null;
                 },
@@ -176,8 +197,8 @@ class _UserFormScreenState extends State<UserFormScreen> {
                 controller: _passwordController,
                 obscureText: _obscurePassword,
                 labelText: _isEditing
-                    ? 'Nouveau mot de passe (laisser vide pour ne pas changer)'
-                    : 'Mot de passe *',
+                    ? AppLocalizations.of(context)!.motDePasseOptionnel
+                    : '${AppLocalizations.of(context)!.motDePasse} *',
                 prefixIcon: const Icon(Icons.lock),
                 suffixIcon: IconButton(
                   icon: Icon(_obscurePassword
@@ -189,10 +210,10 @@ class _UserFormScreenState extends State<UserFormScreen> {
                 ),
                 validator: (value) {
                   if (!_isEditing && (value == null || value.isEmpty)) {
-                    return 'Veuillez entrer un mot de passe';
+                    return AppLocalizations.of(context)!.veuillezEntrerMotDePasse;
                   }
                   if (value != null && value.isNotEmpty && value.length < 4) {
-                    return 'Minimum 4 caractères';
+                    return AppLocalizations.of(context)!.min4Caracteres;
                   }
                   return null;
                 },
@@ -202,11 +223,11 @@ class _UserFormScreenState extends State<UserFormScreen> {
               // Nom
               AppTextField(
                 controller: _nomController,
-                labelText: 'Nom *',
+                labelText: AppLocalizations.of(context)!.nomRequired,
                 prefixIcon: const Icon(Icons.badge),
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
-                    return 'Veuillez entrer le nom';
+                    return AppLocalizations.of(context)!.veuillezEntrerNom;
                   }
                   return null;
                 },
@@ -216,11 +237,11 @@ class _UserFormScreenState extends State<UserFormScreen> {
               // Prénom
               AppTextField(
                 controller: _prenomController,
-                labelText: 'Prénom *',
+                labelText: AppLocalizations.of(context)!.prenomRequired,
                 prefixIcon: const Icon(Icons.badge),
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
-                    return 'Veuillez entrer le prénom';
+                    return AppLocalizations.of(context)!.veuillezEntrerPrenom;
                   }
                   return null;
                 },
@@ -231,7 +252,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
               AppTextField(
                 controller: _telephoneController,
                 keyboardType: TextInputType.phone,
-                labelText: 'Téléphone',
+                labelText: AppLocalizations.of(context)!.telephone,
                 prefixIcon: const Icon(Icons.phone),
               ),
               const SizedBox(height: 16),
@@ -240,7 +261,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
               AppTextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
-                labelText: 'Email',
+                labelText: AppLocalizations.of(context)!.email,
                 prefixIcon: const Icon(Icons.email),
               ),
               const SizedBox(height: 16),
@@ -252,47 +273,68 @@ class _UserFormScreenState extends State<UserFormScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Rôle de l\'utilisateur',
-                        style: TextStyle(
+                      Text(
+                        AppLocalizations.of(context)!.roleUtilisateur,
+                        style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 12),
-                      RadioListTile<String>(
-                        title: const Row(
-                          children: [
-                            Icon(Icons.engineering,
-                                color: AppTheme.secondaryColor),
-                            SizedBox(width: 8),
-                            Text('Exécutant'),
-                          ],
-                        ),
-                        subtitle:
-                            const Text('Peut voir et modifier les tâches'),
-                        value: AppConstants.roleExecutant,
+                      RadioGroup<String>(
                         groupValue: _selectedRole,
                         onChanged: (value) {
-                          setState(() => _selectedRole = value!);
+                          if (value != null) {
+                            setState(() => _selectedRole = value);
+                          }
                         },
-                      ),
-                      RadioListTile<String>(
-                        title: const Row(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.admin_panel_settings,
-                                color: AppTheme.primaryColor),
-                            SizedBox(width: 8),
-                            Text('Administrateur'),
+                            RadioListTile<String>(
+                              title: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.engineering,
+                                      color: AppTheme.secondaryColor),
+                                  const SizedBox(width: 8),
+                                  Text(AppLocalizations.of(context)!.executant),
+                                ],
+                              ),
+                              subtitle:
+                                  Text(AppLocalizations.of(context)!.descriptionRoleExecutant),
+                              value: AppConstants.roleExecutant,
+                            ),
+                            RadioListTile<String>(
+                              title: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.event_note,
+                                      color: AppTheme.warningColor),
+                                  const SizedBox(width: 8),
+                                  Text(AppLocalizations.of(context)!.planificateur),
+                                ],
+                              ),
+                              subtitle: Text(
+                                  AppLocalizations.of(context)!.descriptionRolePlanificateur),
+                              value: AppConstants.rolePlanificateur,
+                            ),
+                            RadioListTile<String>(
+                              title: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.admin_panel_settings,
+                                      color: AppTheme.primaryColor),
+                                  const SizedBox(width: 8),
+                                  Text(AppLocalizations.of(context)!.administrateur),
+                                ],
+                              ),
+                              subtitle:
+                                  Text(AppLocalizations.of(context)!.descriptionRoleAdmin),
+                              value: AppConstants.roleAdmin,
+                            ),
                           ],
                         ),
-                        subtitle:
-                            const Text('Accès complet à l\'application'),
-                        value: AppConstants.roleAdmin,
-                        groupValue: _selectedRole,
-                        onChanged: (value) {
-                          setState(() => _selectedRole = value!);
-                        },
                       ),
                     ],
                   ),
@@ -317,10 +359,10 @@ class _UserFormScreenState extends State<UserFormScreen> {
                         )
                       : const Icon(Icons.save),
                   label: Text(_isSaving
-                      ? 'Enregistrement...'
+                      ? AppLocalizations.of(context)!.enregistrement
                       : _isEditing
-                          ? 'Modifier l\'utilisateur'
-                          : 'Créer l\'utilisateur'),
+                          ? AppLocalizations.of(context)!.modifierUtilisateur
+                          : AppLocalizations.of(context)!.creerUtilisateur),
                 ),
               ),
               const SizedBox(height: 20),

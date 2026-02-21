@@ -3,6 +3,8 @@
 // SERVICE DE SYNCHRONISATION
 // LOCAL ↔ SERVEUR DISTANT
 // ============================================
+import 'dart:async';
+import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../models/task_model.dart';
 import '../models/task_history_model.dart';
@@ -21,11 +23,19 @@ class SyncService {
 
   bool _isSyncing = false;
 
-  // Vérifier la connectivité
+  // Vérifier la connectivité (timeout pour éviter blocage au démarrage)
   Future<bool> hasConnection() async {
-    final connectivityResult = await Connectivity().checkConnectivity();
-    return !connectivityResult.contains(ConnectivityResult.none);
+    try {
+      final connectivityResult = await Connectivity()
+          .checkConnectivity()
+          .timeout(const Duration(seconds: 5));
+      return !connectivityResult.contains(ConnectivityResult.none);
+    } catch (_) {
+      return false;
+    }
   }
+
+  static const Duration _syncMaxDuration = Duration(seconds: 40);
 
   // Synchronisation complète
   Future<SyncResult> syncAll() async {
@@ -43,23 +53,26 @@ class SyncService {
     int synced = 0;
 
     try {
-      // 1. Envoyer les modifications locales vers le serveur
-      synced += await _pushLocalChanges();
+      // Timeout global pour ne pas bloquer indéfiniment
+      await _runWithTimeout(() async {
+        // 1. Envoyer les modifications locales vers le serveur
+        synced += await _pushLocalChanges();
 
-      // 2. Récupérer les données du serveur
-      synced += await _pullFromServer();
+        // 2. Récupérer les données du serveur
+        synced += await _pullFromServer();
 
-      // 3. Synchroniser l'historique
-      synced += await _syncHistory();
+        // 3. Synchroniser l'historique
+        synced += await _syncHistory();
 
-      // 4. Synchroniser les utilisateurs
-      await _syncUsers();
+        // 4. Synchroniser les utilisateurs
+        await _syncUsers();
 
-      // 5. Synchroniser les immeubles (fusion bidirectionnelle)
-      await _syncImmeubles();
+        // 5. Synchroniser les immeubles (fusion bidirectionnelle)
+        await _syncImmeubles();
 
-      // 6. Supprimer les tâches archivées du stockage local
-      await _localDb.removeArchivedTasksLocally();
+        // 6. Supprimer les tâches archivées du stockage local
+        await _localDb.removeArchivedTasksLocally();
+      });
 
       _isSyncing = false;
       return SyncResult(
@@ -77,6 +90,15 @@ class SyncService {
     }
   }
 
+  Future<void> _runWithTimeout(Future<void> Function() run) async {
+    await run().timeout(
+      _syncMaxDuration,
+      onTimeout: () => throw TimeoutException(
+        'Synchronisation interrompue après ${_syncMaxDuration.inSeconds}s',
+      ),
+    );
+  }
+
   // Envoyer les changements locaux vers Supabase
   Future<int> _pushLocalChanges() async {
     int count = 0;
@@ -88,7 +110,24 @@ class SyncService {
           await _supabase.upsertTask(task.copyWith(deleted: true));
           await _localDb.deleteTask(task.id);
         } else {
-          await _supabase.upsertTask(task);
+          // Si une photo a été prise hors-ligne, l'uploader vers R2 avant l'upsert
+          TaskModel taskToPush = task;
+          if (task.photoLocalPath.isNotEmpty) {
+            try {
+              final file = File(task.photoLocalPath);
+              if (await file.exists()) {
+                try {
+                  final photoUrl = await _supabase.uploadPhoto(task.photoLocalPath, task.id);
+                  taskToPush = task.copyWith(photoUrl: photoUrl);
+                } catch (_) {
+                  // Échec upload photo : on pousse la tâche sans URL photo, on réessaiera au prochain sync
+                }
+              }
+            } catch (_) {
+              // Fichier inaccessible (stockage) : on pousse la tâche sans photo
+            }
+          }
+          await _supabase.upsertTask(taskToPush);
 
           // Récupérer la tâche du serveur pour obtenir le task_number attribué
           TaskModel? serverTask = await _supabase.getTaskById(task.id);
@@ -97,28 +136,24 @@ class SyncService {
             if (serverTask.archived) {
               await _localDb.deleteTask(task.id);
             } else {
-              // Mettre à jour le numéro de tâche et le statut de sync
+              // Mettre à jour le numéro de tâche et le statut de sync ; effacer photoLocalPath seulement si la photo a été envoyée sur R2
+              final clearLocalPath = taskToPush.photoUrl.isNotEmpty;
               await _localDb.updateTask(serverTask.copyWith(
                 syncStatus: 'synced',
-                photoLocalPath: task.photoLocalPath,
+                photoLocalPath: clearLocalPath ? '' : task.photoLocalPath,
               ));
             }
           } else {
-            await _localDb
-                .updateTask(task.copyWith(syncStatus: 'synced'));
+            final clearLocalPath = taskToPush.photoUrl.isNotEmpty;
+            await _localDb.updateTask(taskToPush.copyWith(
+              syncStatus: 'synced',
+              photoLocalPath: clearLocalPath ? '' : task.photoLocalPath,
+            ));
           }
 
-          // Aussi enregistrer l'immeuble s'il n'existe pas encore
-          if (task.immeuble.isNotEmpty) {
-            try {
-              await _supabase
-                  .insertImmeubleIfNotExists(task.immeuble);
-              await _localDb
-                  .insertImmeubleIfNotExists(task.immeuble);
-            } catch (e) {
-              // Ignorer les erreurs d'immeuble
-            }
-          }
+          // Avec le stockage de l'ID d'immeuble dans la tâche,
+          // la création/mise à jour des immeubles se fait via
+          // l'écran de gestion dédié, plus via les tâches.
         }
         count++;
       } catch (e) {
@@ -129,11 +164,12 @@ class SyncService {
     return count;
   }
 
-  // Récupérer les tâches du serveur
+  // Récupérer les tâches du serveur et aligner le local (supprimer les tâches absentes du serveur)
   Future<int> _pullFromServer() async {
     int count = 0;
     try {
       List<TaskModel> serverTasks = await _supabase.getAllActiveTasks();
+      final serverIds = serverTasks.map((t) => t.id).toSet();
 
       for (var serverTask in serverTasks) {
         TaskModel? localTask =
@@ -155,6 +191,16 @@ class SyncService {
           }
         }
         // Si la tâche locale a des modifications en attente, on ne la remplace pas
+      }
+
+      // Supprimer en local les tâches déjà synchronisées qui ne sont plus sur le serveur
+      List<String> localSyncedIds = await _localDb.getSyncedTaskIds();
+      for (final id in localSyncedIds) {
+        if (!serverIds.contains(id)) {
+          await _localDb.deleteHistoryForTask(id);
+          await _localDb.deleteTask(id);
+          count++;
+        }
       }
     } catch (e) {
       rethrow;
@@ -233,32 +279,10 @@ class SyncService {
 
   // Créer automatiquement les immeubles à partir des tâches existantes
   Future<void> _syncImmeublesFromTasks() async {
-    try {
-      final tasks = await _localDb.getActiveTasks();
-      final existingImmeubles = await _localDb.getAllImmeubles();
-      final existingNoms =
-          existingImmeubles.map((i) => i.nom.toLowerCase()).toSet();
-
-      for (var task in tasks) {
-        if (task.immeuble.isNotEmpty &&
-            !existingNoms.contains(task.immeuble.toLowerCase())) {
-          await _localDb.insertImmeubleIfNotExists(task.immeuble);
-          existingNoms.add(task.immeuble.toLowerCase());
-
-          // Aussi sur le serveur si connecté
-          if (await hasConnection()) {
-            try {
-              await _supabase
-                  .insertImmeubleIfNotExists(task.immeuble);
-            } catch (e) {
-              // Ignorer
-            }
-          }
-        }
-      }
-    } catch (e) {
-      // Ignorer
-    }
+    // Avec le stockage de l'ID d'immeuble dans les tâches,
+    // nous ne créons plus automatiquement d'immeubles
+    // à partir des tâches. Les immeubles sont gérés
+    // via l'écran dédié et synchronisés séparément.
   }
 }
 

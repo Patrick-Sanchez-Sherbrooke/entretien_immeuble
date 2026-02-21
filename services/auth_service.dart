@@ -5,10 +5,12 @@
 
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
 import 'local_db_service.dart';
 import 'supabase_service.dart';
+import '../utils/constants.dart';
 
 class AuthService {
   static final AuthService _instance = AuthService._internal();
@@ -33,66 +35,69 @@ class AuthService {
     String hash = hashPassword(motDePasse);
 
     // DEBUG : Afficher le hash pour vérification
-    print('=== DEBUG LOGIN ===');
-    print('Identifiant: $identifiant');
-    print('Hash calculé: $hash');
+    debugPrint('=== DEBUG LOGIN ===');
+    debugPrint('Identifiant: $identifiant');
+    debugPrint('Hash calculé: $hash');
 
     UserModel? user;
 
     // 1. Essayer d'abord sur le serveur Supabase
     try {
-      print('Tentative de connexion à Supabase...');
+      debugPrint('Tentative de connexion à Supabase...');
       user = await _supabase.getUserByIdentifiant(identifiant);
       if (user != null) {
-        print('Utilisateur trouvé sur Supabase: ${user.nomComplet}');
-        print('Hash en base: ${user.motDePasseHash}');
+        debugPrint('Utilisateur trouvé sur Supabase: ${user.nomComplet}');
+        debugPrint('Hash en base: ${user.motDePasseHash}');
         // Sauvegarder en local pour le mode offline
         await _localDb.insertUser(user);
       } else {
-        print('Utilisateur NON trouvé sur Supabase');
+        debugPrint('Utilisateur NON trouvé sur Supabase');
       }
     } catch (e) {
-      print('Erreur Supabase: $e');
+      debugPrint('Erreur Supabase: $e');
       // Pas de connexion, on continue avec le local
     }
 
     // 2. Si pas trouvé sur le serveur, chercher en local
     if (user == null) {
-      print('Recherche en local...');
+      debugPrint('Recherche en local...');
       user = await _localDb.getUserByIdentifiant(identifiant);
       if (user != null) {
-        print('Utilisateur trouvé en local: ${user.nomComplet}');
-        print('Hash en base locale: ${user.motDePasseHash}');
+        debugPrint('Utilisateur trouvé en local: ${user.nomComplet}');
+        debugPrint('Hash en base locale: ${user.motDePasseHash}');
       } else {
-        print('Utilisateur NON trouvé en local');
+        debugPrint('Utilisateur NON trouvé en local');
       }
     }
 
     // 3. Vérifications
     if (user == null) {
-      print('ÉCHEC: Utilisateur introuvable');
+      debugPrint('ÉCHEC: Utilisateur introuvable');
       return null;
     }
 
     if (user.motDePasseHash != hash) {
-      print('ÉCHEC: Mot de passe incorrect');
-      print('Hash attendu: ${user.motDePasseHash}');
-      print('Hash fourni:  $hash');
+      debugPrint('ÉCHEC: Mot de passe incorrect');
+      debugPrint('Hash attendu: ${user.motDePasseHash}');
+      debugPrint('Hash fourni:  $hash');
       return null;
     }
 
     if (user.archived) {
-      print('ÉCHEC: Utilisateur archivé');
+      debugPrint('ÉCHEC: Utilisateur archivé');
       return null;
     }
 
-    print('SUCCÈS: Connexion réussie pour ${user.nomComplet}');
+    debugPrint('SUCCÈS: Connexion réussie pour ${user.nomComplet}');
     _currentUser = user;
 
-    // Sauvegarder la session
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('current_user_id', user.id);
-    await prefs.setString('current_user_role', user.role);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('current_user_id', user.id);
+      await prefs.setString('current_user_role', user.role);
+    } catch (_) {
+      // Préférences inaccessibles : session en mémoire uniquement.
+    }
 
     return user;
   }
@@ -100,23 +105,51 @@ class AuthService {
   // Déconnexion
   Future<void> logout() async {
     _currentUser = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('current_user_id');
-    await prefs.remove('current_user_role');
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('current_user_id');
+      await prefs.remove('current_user_role');
+    } catch (_) {
+      // Préférences inaccessibles.
+    }
   }
 
   // Restaurer la session au lancement
   Future<UserModel?> restoreSession() async {
-    final prefs = await SharedPreferences.getInstance();
-    String? userId = prefs.getString('current_user_id');
-    if (userId == null) return null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      String? userId = prefs.getString('current_user_id');
+      if (userId == null) return null;
 
-    _currentUser = await _localDb.getUserById(userId);
-    return _currentUser;
+      _currentUser = await _localDb.getUserById(userId);
+      return _currentUser;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Recharge l'utilisateur courant depuis la base (après mise à jour du profil).
+  Future<void> refreshCurrentUser() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString('current_user_id');
+      if (userId == null) return;
+      _currentUser = await _localDb.getUserById(userId);
+    } catch (_) {
+      // Conserver l'utilisateur en mémoire en cas d'erreur base de données
+    }
   }
 
   // Vérifier si administrateur
-  bool get isAdmin => _currentUser?.role == 'administrateur';
+  bool get isAdmin => _currentUser?.role == AppConstants.roleAdmin;
+
+  // Vérifier si planificateur
+  bool get isPlanificateur =>
+      _currentUser?.role == AppConstants.rolePlanificateur;
+
+  // Vérifier si exécutant
+  bool get isExecutant =>
+      _currentUser?.role == AppConstants.roleExecutant;
 
   // Vérifier si connecté
   bool get isLoggedIn => _currentUser != null;

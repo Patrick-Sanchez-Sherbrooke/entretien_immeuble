@@ -2,11 +2,15 @@
 // ============================================
 // ÉCRAN FORMULAIRE DE CRÉATION/MODIFICATION DE TÂCHE
 // ============================================
+import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
 import '../models/task_model.dart';
 import '../models/task_history_model.dart';
 import '../models/immeuble_model.dart';
@@ -16,10 +20,15 @@ import '../services/auth_service.dart';
 import '../services/sync_service.dart';
 import '../services/notification_service.dart';
 import '../utils/theme.dart';
+import '../utils/error_util.dart';
 import '../widgets/app_text_field.dart';
+import 'in_app_camera_screen.dart';
 
 class TaskFormScreen extends StatefulWidget {
   final TaskModel? task;
+
+  /// Clé SharedPreferences pour restaurer le formulaire d'édition si l'app a été recréée (ex. retour caméra).
+  static const String kPendingEditTaskIdKey = 'pending_edit_task_id';
 
   const TaskFormScreen({super.key, this.task});
 
@@ -37,6 +46,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   late TextEditingController _chambreController;
   late TextEditingController _descriptionController;
   late TextEditingController _doneByController;
+  late TextEditingController _executionNoteController;
 
   // Liste des immeubles
   List<ImmeubleModel> _immeubles = [];
@@ -48,12 +58,20 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   String? _photoLocalPath;
   String? _photoUrl;
   bool _isSaving = false;
+  /// Bloque le retour (bouton/geste) pendant la prise de photo pour rester sur le formulaire.
+  bool _isPickingImage = false;
 
   bool get _isEditing => widget.task != null;
 
   bool get _hasPhoto {
     return (_photoLocalPath != null && _photoLocalPath!.isNotEmpty) ||
         (_photoUrl != null && _photoUrl!.isNotEmpty);
+  }
+
+  void _clearPendingEditTaskId() {
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.remove(TaskFormScreen.kPendingEditTaskIdKey);
+    }).catchError((_) {});
   }
 
   // ============================================
@@ -71,6 +89,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
         TextEditingController(text: widget.task?.description ?? '');
     _doneByController =
         TextEditingController(text: widget.task?.doneBy ?? '');
+    _executionNoteController =
+        TextEditingController(text: widget.task?.executionNote ?? '');
 
     _selectedImmeuble =
         widget.task?.immeuble.isNotEmpty == true
@@ -83,14 +103,23 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     _photoLocalPath = widget.task?.photoLocalPath;
 
     _loadImmeubles();
+    if (widget.task != null) {
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setString(TaskFormScreen.kPendingEditTaskIdKey, widget.task!.id);
+      }).catchError((_) {});
+    }
   }
 
   @override
   void dispose() {
+    // Ne jamais effacer la clé ici : si l'activité est tuée (ex. caméra), la clé doit rester
+    // pour que _restoreEditFormIfReopened rouvre le formulaire. On efface uniquement lors
+    // d'une sortie explicite (enregistrement réussi ou bouton retour).
     _etageController.dispose();
     _chambreController.dispose();
     _descriptionController.dispose();
     _doneByController.dispose();
+    _executionNoteController.dispose();
     super.dispose();
   }
 
@@ -103,75 +132,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     if (mounted) {
       setState(() {
         _immeubles = immeubles;
-        // Si l'immeuble de la tâche n'est pas dans la liste, l'ajouter
-        if (_selectedImmeuble != null &&
-            !_immeubles.any((i) => i.nom == _selectedImmeuble)) {
-          _immeubles.add(ImmeubleModel(
-            id: 'temp',
-            nom: _selectedImmeuble!,
-          ));
-        }
       });
     }
-  }
-
-  // ============================================
-  // AJOUTER UN IMMEUBLE (ADMIN UNIQUEMENT)
-  // ============================================
-
-  void _showAddImmeubleDialog() {
-    if (!_auth.isAdmin) {
-      _showSnackBar(
-        '❌ Seul un administrateur peut ajouter un immeuble',
-        isError: true,
-      );
-      return;
-    }
-
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Ajouter un immeuble'),
-        content: AppTextField(
-          controller: controller,
-          labelText: 'Nom de l\'immeuble',
-          prefixIcon: const Icon(Icons.apartment),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final nom = controller.text.trim();
-              if (nom.isNotEmpty) {
-                await _localDb.insertImmeubleIfNotExists(nom);
-
-                if (await SyncService().hasConnection()) {
-                  try {
-                    await _supabase.insertImmeubleIfNotExists(nom);
-                  } catch (_) {
-                    // Sera synchronisé plus tard
-                  }
-                }
-
-                await _loadImmeubles();
-
-                if (mounted) {
-                  setState(() {
-                    _selectedImmeuble = nom;
-                  });
-                  Navigator.pop(context);
-                }
-              }
-            },
-            child: const Text('Ajouter'),
-          ),
-        ],
-      ),
-    );
   }
 
   // ============================================
@@ -220,24 +182,36 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
     if (source == null || !mounted) return;
 
+    setState(() => _isPickingImage = true);
     try {
-      final XFile? pickedFile = await picker.pickImage(
-        source: source,
-        maxWidth: 1024,
-        maxHeight: 1024,
-        imageQuality: 80,
-      );
+      String? photoPath;
+      if (source == ImageSource.camera) {
+        // Caméra in-app : on reste dans l'activité, pas de perte d'écran
+        photoPath = await Navigator.of(context).push<String>(
+          MaterialPageRoute(
+            builder: (_) => const InAppCameraScreen(),
+          ),
+        );
+      } else {
+        final XFile? pickedFile = await picker.pickImage(
+          source: source,
+          maxWidth: 1024,
+          maxHeight: 1024,
+          imageQuality: 80,
+        );
+        photoPath = pickedFile?.path;
+      }
 
-      if (pickedFile != null && mounted) {
-        setState(() {
-          _photoLocalPath = pickedFile.path;
-        });
+      if (photoPath != null && photoPath.isNotEmpty && mounted) {
+        setState(() => _photoLocalPath = photoPath);
         _showSnackBar('✅ Photo ajoutée avec succès');
       }
     } catch (e) {
       if (mounted) {
-        _showSnackBar('❌ Erreur: $e', isError: true);
+        _showSnackBar('❌ Erreur: ${formatSyncError(e)}', isError: true);
       }
+    } finally {
+      if (mounted) setState(() => _isPickingImage = false);
     }
   }
 
@@ -275,13 +249,31 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   // SÉLECTION DE DATE
   // ============================================
 
+  static DateTime _dateOnly(DateTime d) =>
+      DateTime(d.year, d.month, d.day);
+
   Future<void> _selectDate(bool isPlannedDate) async {
+    final now = DateTime.now();
+    final today = _dateOnly(now);
+    final tomorrow = today.add(const Duration(days: 1));
+
+    DateTime initialDate;
+    DateTime firstDate;
+    if (isPlannedDate) {
+      firstDate = tomorrow;
+      final current = _plannedDate ?? now;
+      initialDate = _dateOnly(current).isAfter(today)
+          ? current
+          : tomorrow;
+    } else {
+      firstDate = DateTime(2020);
+      initialDate = _doneDate ?? now;
+    }
+
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: isPlannedDate
-          ? (_plannedDate ?? DateTime.now())
-          : (_doneDate ?? DateTime.now()),
-      firstDate: DateTime(2020),
+      initialDate: initialDate,
+      firstDate: firstDate,
       lastDate: DateTime(2030),
     );
 
@@ -303,8 +295,19 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   bool _validateForm() {
     if (!_formKey.currentState!.validate()) return false;
     if (_selectedImmeuble == null || _selectedImmeuble!.isEmpty) {
-      _showSnackBar('❌ Veuillez sélectionner un immeuble', isError: true);
+      _showSnackBar('❌ ${AppLocalizations.of(context)!.veuillezSelectionnerImmeuble}', isError: true);
       return false;
+    }
+    if (_plannedDate != null) {
+      final today = _dateOnly(DateTime.now());
+      final plannedDay = _dateOnly(_plannedDate!);
+      if (!plannedDay.isAfter(today)) {
+        _showSnackBar(
+          AppLocalizations.of(context)!.datePlanificationPosterieure,
+          isError: true,
+        );
+        return false;
+      }
     }
     return true;
   }
@@ -317,16 +320,21 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     // Si photo supprimée
     if (_photoLocalPath == null && _photoUrl == null) return '';
 
-    // Si nouvelle photo locale
-    if (_photoLocalPath != null &&
-        _photoLocalPath!.isNotEmpty &&
-        _photoLocalPath != widget.task?.photoLocalPath) {
-      try {
-        if (await SyncService().hasConnection()) {
+    // Upload vers R2 si on a une photo locale et :
+    // - c'est un chemin différent (nouvelle photo), ou
+    // - on n'a pas encore d'URL (photo jamais envoyée, ex. reprise après hors-ligne)
+    final hasLocalPhoto = _photoLocalPath != null && _photoLocalPath!.isNotEmpty;
+    if (hasLocalPhoto && await SyncService().hasConnection()) {
+      final isNewPath = _photoLocalPath != widget.task?.photoLocalPath;
+      final noUrlYet = _photoUrl == null || _photoUrl!.isEmpty;
+      if (isNewPath || noUrlYet) {
+        try {
           return await _supabase.uploadPhoto(_photoLocalPath!, taskId);
+        } catch (e) {
+          if (kDebugMode) debugPrint('Upload photo R2: $e');
+          // En ligne : on propage l'erreur pour que l'utilisateur la voie et puisse réessayer
+          rethrow;
         }
-      } catch (_) {
-        // On garde le chemin local, sera synchronisé plus tard
       }
     }
 
@@ -354,9 +362,14 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       etage: _etageController.text.trim(),
       chambre: _chambreController.text.trim(),
       description: _descriptionController.text.trim(),
+      createdBy: widget.task?.createdBy.isNotEmpty == true
+          ? widget.task!.createdBy
+          : (currentUser?.id ?? ''),
       done: _done,
       doneDate: _done ? (_doneDate ?? DateTime.now()) : null,
       doneBy: _doneByController.text.trim(),
+      executionNote:
+          _done ? _executionNoteController.text.trim() : '',
       lastModifiedBy: currentUser?.id ?? '',
       photoUrl: photoUrl,
       photoLocalPath: _photoLocalPath ?? '',
@@ -369,31 +382,39 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   // SAUVEGARDE — Créer une nouvelle tâche
   // ============================================
 
-  Future<void> _createNewTask(TaskModel task) async {
+  Future<void> _createNewTask(TaskModel task, AppLocalizations l10n) async {
     final currentUser = _auth.currentUser;
     await _localDb.insertTask(task);
-    await _localDb.insertHistory(TaskHistoryModel(
+    final creationHistory = TaskHistoryModel(
       taskId: task.id,
       champModifie: 'creation',
       ancienneValeur: '',
-      nouvelleValeur: 'Tâche créée',
+      nouvelleValeur: l10n.tacheCreeeSansNum,
       modifiedBy: currentUser?.id ?? '',
       modifiedByName: currentUser?.nomComplet ?? '',
       syncStatus: 'pending_create',
-    ));
+    );
+    await _localDb.insertHistory(creationHistory);
+    if (await SyncService().hasConnection()) {
+      try {
+        await SupabaseService().insertHistory(creationHistory);
+      } catch (_) {}
+    }
   }
 
   // ============================================
   // SAUVEGARDE — Mettre à jour une tâche existante
   // ============================================
 
-  Future<void> _updateExistingTask(TaskModel task) async {
+  Future<void> _updateExistingTask(
+      TaskModel task, AppLocalizations l10n) async {
     final currentUser = _auth.currentUser;
     await _recordChanges(
       widget.task!,
       task,
       currentUser?.id ?? '',
       currentUser?.nomComplet ?? '',
+      l10n,
     );
     await _localDb.updateTask(task);
   }
@@ -423,6 +444,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
   Future<void> _saveTask() async {
     if (!_validateForm()) return;
+    final l10n = AppLocalizations.of(context)!;
 
     setState(() => _isSaving = true);
 
@@ -432,24 +454,60 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       final task = await _buildTaskModel(photoUrl);
 
       if (_isEditing) {
-        await _updateExistingTask(task);
+        await _updateExistingTask(task, l10n);
       } else {
-        await _createNewTask(task);
+        await _createNewTask(task, l10n);
+      }
+
+      // Envoi immédiat vers Supabase après création ou modification
+      String? syncError;
+      if (await SyncService().hasConnection()) {
+        try {
+          await SupabaseService().upsertTask(
+            task.copyWith(syncStatus: 'synced'),
+          );
+        } catch (e) {
+          syncError = formatSyncError(e);
+        }
+      } else {
+        syncError = 'Pas de connexion internet';
       }
 
       await _sendNotificationsIfNeeded(task);
 
-      if (mounted) {
-        _showSnackBar(
-          _isEditing
-              ? '✅ Tâche modifiée'
-              : '✅ Tâche #${task.taskNumber} créée',
+      // Étape 8 : push aux exécutants en excluant le créateur (et l'admin n'est jamais destinataire)
+      if (!_isEditing && await SyncService().hasConnection()) {
+        await _supabase.notifyExecutantsNewTask(
+          taskId: task.id,
+          description: task.description,
+          taskNumber: task.taskNumber,
+          creatorId: _auth.currentUser?.id,
         );
+      }
+
+      if (mounted) {
+        if (syncError != null) {
+          if (syncError == l10n.pasDeConnexion) {
+            _showSnackBar(l10n.tacheEnregistreeSyncAuRetour);
+          } else {
+            _showSnackBar(
+              '${_isEditing ? l10n.tacheModifiee : l10n.tacheCreee(task.taskNumber.toString())} (distant : $syncError)',
+              isError: true,
+            );
+          }
+        } else {
+          _showSnackBar(
+            _isEditing
+                ? l10n.tacheModifiee
+                : l10n.tacheCreee(task.taskNumber.toString()),
+          );
+        }
+        _clearPendingEditTaskId();
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
-        _showSnackBar('❌ Erreur: $e', isError: true);
+        _showSnackBar('❌ Erreur: ${formatSyncError(e)}', isError: true);
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -465,6 +523,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     TaskModel newTask,
     String modifiedBy,
     String modifiedByName,
+    AppLocalizations l10n,
   ) async {
     final changes = <MapEntry<String, List<String>>>[];
 
@@ -484,6 +543,10 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       changes.add(MapEntry(
           'description', [oldTask.description, newTask.description]));
     }
+    if (oldTask.executionNote != newTask.executionNote) {
+      changes.add(MapEntry('execution_note',
+          [oldTask.executionNote, newTask.executionNote]));
+    }
     if (oldTask.done != newTask.done) {
       changes.add(MapEntry(
           'done', [oldTask.done.toString(), newTask.done.toString()]));
@@ -494,25 +557,25 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     }
     if (oldTask.photoUrl != newTask.photoUrl) {
       changes.add(MapEntry('photo_url', [
-        oldTask.photoUrl.isNotEmpty ? 'Photo existante' : '',
+        oldTask.photoUrl.isNotEmpty ? l10n.photoExistante : '',
         newTask.photoUrl.isNotEmpty
-            ? 'Nouvelle photo'
-            : 'Photo supprimée',
+            ? l10n.nouvellePhoto
+            : l10n.photoSupprimee,
       ]));
     }
     if (oldTask.plannedDate != newTask.plannedDate) {
       changes.add(MapEntry('planned_date', [
         oldTask.plannedDate != null
             ? DateFormat('dd/MM/yyyy').format(oldTask.plannedDate!)
-            : 'Non définie',
+            : l10n.nonDefinie,
         newTask.plannedDate != null
             ? DateFormat('dd/MM/yyyy').format(newTask.plannedDate!)
-            : 'Non définie',
+            : l10n.nonDefinie,
       ]));
     }
 
     for (var change in changes) {
-      await _localDb.insertHistory(TaskHistoryModel(
+      final historyEntry = TaskHistoryModel(
         taskId: oldTask.id,
         champModifie: change.key,
         ancienneValeur: change.value[0],
@@ -520,7 +583,14 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
         modifiedBy: modifiedBy,
         modifiedByName: modifiedByName,
         syncStatus: 'pending_create',
-      ));
+      );
+      await _localDb.insertHistory(historyEntry);
+      // Envoi immédiat de l'historique vers Supabase
+      if (await SyncService().hasConnection()) {
+        try {
+          await SupabaseService().insertHistory(historyEntry);
+        } catch (_) {}
+      }
     }
   }
 
@@ -600,7 +670,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           shape: BoxShape.circle,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.3),
+              color: Colors.black.withValues(alpha: 0.3),
               blurRadius: 4,
               offset: const Offset(0, 2),
             ),
@@ -621,14 +691,20 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final bool isPlanificateur = _auth.isPlanificateur;
+    return PopScope(
+      canPop: !_isPickingImage,
+      onPopInvokedWithResult: (bool didPop, dynamic result) {
+        if (didPop) _clearPendingEditTaskId();
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text(
           _isEditing && widget.task!.taskNumber != null
-              ? 'Modifier la tâche #${widget.task!.taskNumber}'
+              ? AppLocalizations.of(context)!.modifierLaTacheNum(widget.task!.taskNumber!.toString())
               : _isEditing
-                  ? 'Modifier la tâche'
-                  : 'Ajouter une tâche',
+                  ? AppLocalizations.of(context)!.modifierLaTache
+                  : AppLocalizations.of(context)!.ajouterUneTache,
         ),
       ),
       body: SingleChildScrollView(
@@ -641,49 +717,31 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
               // ============================================
               // IMMEUBLE — Liste déroulante
               // ============================================
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: _selectedImmeuble,
-                      decoration: const InputDecoration(
-                        labelText: 'Immeuble *',
-                        prefixIcon: Icon(Icons.apartment),
-                      ),
-                      isExpanded: true,
-                      hint: const Text('Sélectionner un immeuble'),
-                      items: _immeubles.map((immeuble) {
-                        return DropdownMenuItem<String>(
-                          value: immeuble.nom,
-                          child: Text(immeuble.nom),
-                        );
-                      }).toList(),
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedImmeuble = value;
-                        });
-                      },
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Veuillez sélectionner un immeuble';
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  if (_auth.isAdmin)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: IconButton(
-                        onPressed: _showAddImmeubleDialog,
-                        icon: const Icon(Icons.add_circle,
-                            color: AppTheme.secondaryColor, size: 32),
-                        tooltip: 'Ajouter un immeuble',
-                      ),
-                    ),
-                ],
+              DropdownButtonFormField<String>(
+                initialValue: _selectedImmeuble,
+                decoration: InputDecoration(
+                  labelText: AppLocalizations.of(context)!.immeubleRequired,
+                  prefixIcon: const Icon(Icons.apartment),
+                ),
+                isExpanded: true,
+                hint: Text(AppLocalizations.of(context)!.selectionnerImmeuble),
+                items: _immeubles.map((immeuble) {
+                  return DropdownMenuItem<String>(
+                    value: immeuble.id,
+                    child: Text(immeuble.nom),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _selectedImmeuble = value;
+                  });
+                },
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return AppLocalizations.of(context)!.veuillezSelectionnerImmeuble;
+                  }
+                  return null;
+                },
               ),
 
               const SizedBox(height: 16),
@@ -696,7 +754,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                   Expanded(
                     child: AppTextField(
                       controller: _etageController,
-                      labelText: 'Étage',
+                      labelText: AppLocalizations.of(context)!.etage,
                       prefixIcon: const Icon(Icons.layers),
                     ),
                   ),
@@ -704,7 +762,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                   Expanded(
                     child: AppTextField(
                       controller: _chambreController,
-                      labelText: 'Chambre',
+                      labelText: AppLocalizations.of(context)!.chambre,
                       prefixIcon: const Icon(Icons.door_front_door),
                     ),
                   ),
@@ -719,11 +777,11 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
               AppTextField(
                 controller: _descriptionController,
                 maxLines: 4,
-                labelText: 'Description de la tâche *',
+                labelText: AppLocalizations.of(context)!.descriptionTache,
                 prefixIcon: const Icon(Icons.description),
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
-                    return 'Veuillez entrer une description';
+                    return AppLocalizations.of(context)!.veuillezEntrerDescription;
                   }
                   return null;
                 },
@@ -738,11 +796,11 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 child: ListTile(
                   leading: const Icon(Icons.calendar_today,
                       color: AppTheme.warningColor),
-                  title: const Text('Date planifiée'),
+                  title: Text(AppLocalizations.of(context)!.datePlanifiee),
                   subtitle: Text(
                     _plannedDate != null
                         ? DateFormat('dd/MM/yyyy').format(_plannedDate!)
-                        : 'Non définie',
+                        : AppLocalizations.of(context)!.nonDefinie,
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -779,30 +837,45 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     size: 32,
                   ),
                   title: Text(
-                    _done ? 'Tâche terminée' : 'Tâche en cours',
+                    _done ? AppLocalizations.of(context)!.tacheTerminee : AppLocalizations.of(context)!.tacheEnCours,
                     style:
                         const TextStyle(fontWeight: FontWeight.w600),
                   ),
+          subtitle: isPlanificateur
+              ? Text(
+                  AppLocalizations.of(context)!.planificateurNePeutPasCloturer,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textSecondary,
+                  ),
+                )
+              : null,
                   value: _done,
-                  onChanged: (value) {
-                    setState(() {
-                      _done = value;
-                      if (value) {
-                        _doneDate = DateTime.now();
-                        _doneByController.text =
-                            _auth.currentUser?.nomComplet ?? '';
-                      } else {
-                        _doneDate = null;
-                      }
-                    });
-                  },
+          onChanged: isPlanificateur
+              ? null
+              : (value) {
+                  setState(() {
+                    _done = value;
+                    if (value) {
+                      _doneDate = DateTime.now();
+                      _doneByController.text =
+                          _auth.currentUser?.nomComplet ?? '';
+                    } else {
+                      _doneDate = null;
+                      _doneByController.clear();
+                      _executionNoteController.clear();
+                      _photoLocalPath = null;
+                      _photoUrl = null;
+                    }
+                  });
+                },
                 ),
               ),
 
               // ============================================
               // SI FAIT : DATE, EXÉCUTANT, PHOTO
               // ============================================
-              if (_done) ...[
+      if (_done && !isPlanificateur) ...[
                 const SizedBox(height: 12),
 
                 // Date d'exécution
@@ -810,12 +883,12 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                   child: ListTile(
                     leading: const Icon(Icons.event_available,
                         color: AppTheme.successColor),
-                    title: const Text('Date d\'exécution'),
+                    title: Text(AppLocalizations.of(context)!.dateExecutionLong),
                     subtitle: Text(
                       _doneDate != null
                           ? DateFormat('dd/MM/yyyy')
                               .format(_doneDate!)
-                          : 'Aujourd\'hui',
+                          : AppLocalizations.of(context)!.aujourdHui,
                     ),
                     trailing: IconButton(
                       icon: const Icon(Icons.edit_calendar),
@@ -829,8 +902,18 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 // Exécutant
                 AppTextField(
                   controller: _doneByController,
-                  labelText: 'Exécutant',
+                  labelText: AppLocalizations.of(context)!.executant,
                   prefixIcon: const Icon(Icons.person),
+                ),
+
+                const SizedBox(height: 12),
+
+                // Note d'exécution
+                AppTextField(
+                  controller: _executionNoteController,
+                  labelText: AppLocalizations.of(context)!.noteExecution,
+                  prefixIcon: const Icon(Icons.notes),
+                  maxLines: 3,
                 ),
 
                 const SizedBox(height: 12),
@@ -842,9 +925,11 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                       ListTile(
                         leading: const Icon(Icons.camera_alt,
                             color: AppTheme.primaryColor),
-                        title: const Text('Photo du travail'),
+                        title: Text(AppLocalizations.of(context)!.photoTravail),
                         subtitle: Text(
-                            _hasPhoto ? 'Photo ajoutée' : 'Optionnel'),
+                            _hasPhoto
+                                ? AppLocalizations.of(context)!.photoAjoutee
+                                : AppLocalizations.of(context)!.optionnel),
                         trailing: ElevatedButton.icon(
                           onPressed: _pickImage,
                           icon: Icon(
@@ -854,7 +939,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                             size: 18,
                           ),
                           label: Text(
-                              _hasPhoto ? 'Changer' : 'Ajouter'),
+                              _hasPhoto
+                                  ? AppLocalizations.of(context)!.changer
+                                  : AppLocalizations.of(context)!.ajouter),
                         ),
                       ),
                       _buildPhotoPreview(),
@@ -885,10 +972,10 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                       : const Icon(Icons.save),
                   label: Text(
                     _isSaving
-                        ? 'Enregistrement...'
+                        ? AppLocalizations.of(context)!.enregistrement
                         : _isEditing
-                            ? 'Modifier la tâche'
-                            : 'Créer la tâche',
+                            ? AppLocalizations.of(context)!.modifierLaTache
+                            : AppLocalizations.of(context)!.creerLaTache,
                   ),
                 ),
               ),
@@ -898,6 +985,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 }

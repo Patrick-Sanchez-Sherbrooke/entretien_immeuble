@@ -2,20 +2,21 @@
 // ============================================
 // ÉCRAN D'ACCUEIL
 // ============================================
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
 import '../services/auth_service.dart';
 import '../services/sync_service.dart';
 import '../services/local_db_service.dart';
 import '../services/notification_service.dart';
+import '../services/supabase_service.dart';
 import '../utils/theme.dart';
 import '../widgets/app_drawer.dart';
 import 'task_list_screen.dart';
 import 'task_form_screen.dart';
 import 'calendar_screen.dart';
-import 'archive_screen.dart';
 import 'report_screen.dart';
-import 'user_management_screen.dart';
-import 'immeuble_management_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -39,148 +40,209 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadStats();
     _autoSync();
+    _registerFcmTokenIfNeeded();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _restoreEditFormIfReopened());
   }
 
-  Future<void> _loadStats() async {
+  /// Rouvre le formulaire d'édition si l'app a été recréée (ex. retour caméra) pendant une édition.
+  Future<void> _restoreEditFormIfReopened() async {
+    if (!mounted) return;
+    await Future.delayed(const Duration(milliseconds: 400));
+    if (!mounted) return;
     try {
-      final results = await Future.wait([
-        _localDb.getPendingTasks(),
-        _localDb.getDoneTasks(),
-      ]);
-
-      if (!mounted) return;
-
-      final pendingTasks = results[0];
-      final doneTasks = results[1];
-
-      setState(() {
-        _pendingTaskCount = pendingTasks.length;
-        _doneTaskCount = doneTasks.length;
-        _totalTaskCount = _pendingTaskCount + _doneTaskCount;
-      });
-    } catch (e) {
-      // Éviter de casser l'écran en cas d'erreur de lecture DB
-      debugPrint('Erreur lors du chargement des statistiques: $e');
+      final prefs = await SharedPreferences.getInstance();
+      final taskId = prefs.getString(TaskFormScreen.kPendingEditTaskIdKey);
+      if (taskId == null || taskId.isEmpty || !mounted) return;
+      prefs.remove(TaskFormScreen.kPendingEditTaskIdKey);
+      final task = await _localDb.getTaskById(taskId);
+      if (task != null && mounted) {
+        if (!context.mounted) return;
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => TaskFormScreen(task: task),
+          ),
+        ).then((_) => _loadStats());
+      }
+    } catch (_) {
+      // Préférences inaccessibles : pas de restauration du formulaire.
     }
   }
 
-  Future<void> _autoSync() async {
-    // Toujours extraire les immeubles des tâches locales existantes
-    await _extractImmeublesFromLocalTasks();
-
-    await _performSync(
-      showSuccessOnly: true,
-      checkNotifications: true,
-    );
+  /// Enregistre le token FCM dans Supabase à l'arrivée sur l'écran d'accueil (pas à la création de tâche).
+  /// Les logs apparaissent dans le terminal où vous avez lancé "flutter run", ou dans Debug Console.
+  Future<void> _registerFcmTokenIfNeeded() async {
+    // Message visible dès l'entrée dans la méthode (terminal ou Debug Console)
+    debugPrint('=== FCM: _registerFcmTokenIfNeeded() appelé ===');
+    final user = _auth.currentUser;
+    if (user == null) {
+      debugPrint('FCM: pas d\'utilisateur connecté, skip');
+      return;
+    }
+    debugPrint('FCM: user_id=${user.id}');
+    try {
+      final messaging = FirebaseMessaging.instance;
+      final settings = await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      final status = settings.authorizationStatus;
+      debugPrint('FCM: authorizationStatus = $status');
+      if (status != AuthorizationStatus.authorized &&
+          status != AuthorizationStatus.provisional) {
+        debugPrint('FCM: permission refusée ou non définitive, skip');
+        return;
+      }
+      final token = await messaging.getToken();
+      debugPrint('FCM: token = ${token != null && token.isNotEmpty ? "${token.substring(0, 20)}..." : "null ou vide"}');
+      if (token != null && token.isNotEmpty) {
+        await SupabaseService().saveFcmToken(user.id, token);
+        debugPrint('FCM: saveFcmToken OK pour user_id=${user.id}');
+      } else {
+        debugPrint('FCM: pas de token, rien à enregistrer');
+      }
+    } catch (e, st) {
+      debugPrint('FCM: erreur = $e');
+      debugPrint('FCM: stack = $st');
+    }
   }
 
-  /// Extraire les immeubles des tâches locales et les insérer dans la table immeubles
-  Future<void> _extractImmeublesFromLocalTasks() async {
-    try {
-      final tasks = await _localDb.getActiveTasks();
-      final immeubles = <String>{};
+  Future<void> _loadStats() async {
+    final pendingTasks = await _localDb.getPendingTasks();
+    final doneTasks = await _localDb.getDoneTasks();
+    if (mounted) {
+      setState(() {
+        _pendingTaskCount = pendingTasks.length;
+        _doneTaskCount = doneTasks.length;
+        _totalTaskCount =
+            pendingTasks.length + doneTasks.length;
+      });
+    }
+  }
 
-      for (var task in tasks) {
-        if (task.immeuble.isNotEmpty) {
-          immeubles.add(task.immeuble);
+  static const Duration _syncTimeout = Duration(seconds: 45);
+
+  Future<void> _autoSync() async {
+    try {
+      final hasConn = await _syncService.hasConnection()
+          .timeout(const Duration(seconds: 5), onTimeout: () => false);
+      if (!hasConn) {
+        await _loadStats();
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _isSyncing = true);
+
+      final l10n = AppLocalizations.of(context)!;
+      SyncResult result = SyncResult(
+          success: false, message: l10n.delaiDepasse, count: 0);
+      try {
+        result = await _syncService.syncAll().timeout(
+          _syncTimeout,
+          onTimeout: () => SyncResult(
+            success: false,
+            message: l10n.syncInterrompue,
+            count: 0,
+          ),
+        );
+      } catch (e) {
+        result = SyncResult(
+          success: false,
+          message: '${l10n.erreurPrefix}$e',
+          count: 0,
+        );
+      }
+
+      if (_auth.currentUser != null) {
+        try {
+          await NotificationService()
+              .checkServerNotifications(_auth.currentUser!.id)
+              .timeout(const Duration(seconds: 10), onTimeout: () async {});
+        } catch (_) {}
+      }
+
+      await _loadStats();
+      if (mounted) {
+        setState(() => _isSyncing = false);
+        final l10n = AppLocalizations.of(context)!;
+        if (result.success && result.count > 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(l10n.syncSuccessCount(result.count)),
+              backgroundColor: AppTheme.successColor,
+            ),
+          );
+        } else if (!result.success && result.message.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(l10n.syncWarning(result.message)),
+              backgroundColor: AppTheme.warningColor,
+            ),
+          );
         }
       }
-
-      for (final immeuble in immeubles) {
-        await _localDb.insertImmeubleIfNotExists(immeuble);
-      }
     } catch (e) {
-      // Ignorer silencieusement côté UI mais loguer pour le debug
-      debugPrint(
-          'Erreur lors de l\'extraction des immeubles depuis les tâches locales: $e');
+      await _loadStats();
+      if (mounted) {
+        setState(() => _isSyncing = false);
+        final l10n = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.synchronisation('$e')),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSyncing = false);
     }
   }
 
   Future<void> _manualSync() async {
-    await _performSync(
-      showSuccessOnly: false,
-      checkNotifications: false,
-    );
-  }
-
-  /// Logique commune de synchronisation avec meilleure gestion des erreurs
-  Future<void> _performSync({
-    required bool showSuccessOnly,
-    required bool checkNotifications,
-  }) async {
     if (!mounted) return;
-
     setState(() => _isSyncing = true);
-
     try {
-      final hasConnection = await _syncService.hasConnection();
-
-      if (!hasConnection) {
-        if (!mounted) return;
-        setState(() => _isSyncing = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-                'Aucune connexion disponible pour la synchronisation.'),
-            backgroundColor: AppTheme.errorColor,
+      SyncResult result;
+      final l10n = AppLocalizations.of(context)!;
+      try {
+        result = await _syncService.syncAll().timeout(
+          _syncTimeout,
+          onTimeout: () => SyncResult(
+            success: false,
+            message: l10n.delaiDepasse,
+            count: 0,
           ),
         );
-        return;
+      } catch (e) {
+        result = SyncResult(success: false, message: '$e', count: 0);
       }
-
-      final result = await _syncService.syncAll();
-
-      if (checkNotifications && _auth.currentUser != null) {
-        await NotificationService()
-            .checkServerNotifications(_auth.currentUser!.id);
-      }
-
       await _loadStats();
-
-      if (!mounted) return;
-
-      setState(() => _isSyncing = false);
-
-      final successSnackBar = SnackBar(
-        content: Text('✅ ${result.message}'),
-        backgroundColor: AppTheme.successColor,
-      );
-
-      final errorSnackBar = SnackBar(
-        content: Text('❌ ${result.message}'),
-        backgroundColor: AppTheme.errorColor,
-      );
-
-      if (showSuccessOnly) {
-        if (result.success && result.count > 0) {
-          ScaffoldMessenger.of(context).showSnackBar(successSnackBar);
-        }
-      } else {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          result.success ? successSnackBar : errorSnackBar,
+          SnackBar(
+            content: Text(result.success
+                ? l10n.syncSuccessCount(result.count)
+                : l10n.syncError(result.message)),
+            backgroundColor: result.success
+                ? AppTheme.successColor
+                : AppTheme.errorColor,
+          ),
         );
       }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isSyncing = false);
-      debugPrint('Erreur lors de la synchronisation: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-              Text('Une erreur est survenue lors de la synchronisation.'),
-          backgroundColor: AppTheme.errorColor,
-        ),
-      );
+    } finally {
+      if (mounted) setState(() => _isSyncing = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final isAdmin = _auth.isAdmin;
+    final isPlanificateur = _auth.isPlanificateur;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Accueil'),
+        title: Text(l10n.home),
         actions: [
           if (_isSyncing)
             const Padding(
@@ -197,7 +259,7 @@ class _HomeScreenState extends State<HomeScreen> {
           else
             IconButton(
               icon: const Icon(Icons.sync),
-              tooltip: 'Synchroniser',
+              tooltip: l10n.sync,
               onPressed: _manualSync,
             ),
         ],
@@ -220,7 +282,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       CircleAvatar(
                         radius: 30,
                         backgroundColor:
-                            AppTheme.primaryColor.withOpacity(0.1),
+                            AppTheme.primaryColor.withValues(alpha: 0.1),
                         child: const Icon(Icons.person,
                             size: 30,
                             color: AppTheme.primaryColor),
@@ -232,7 +294,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Bonjour ${_auth.currentUser?.prenom ?? ""} !',
+                              l10n.bonjour(_auth.currentUser?.prenom ?? ''),
                               style: const TextStyle(
                                 fontSize: 22,
                                 fontWeight: FontWeight.bold,
@@ -240,8 +302,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             Text(
                               isAdmin
-                                  ? '👑 Administrateur'
-                                  : '🔧 Exécutant',
+                                  ? l10n.roleAdmin
+                                  : isPlanificateur
+                                      ? l10n.rolePlanificateur
+                                      : l10n.roleExecutant,
                               style: const TextStyle(
                                 fontSize: 14,
                                 color: AppTheme.textSecondary,
@@ -263,30 +327,42 @@ class _HomeScreenState extends State<HomeScreen> {
                   // Carte tâches en cours
                   Expanded(
                     flex: 3,
-                    child: Card(
-                      color: AppTheme.warningColor,
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          children: [
-                            const Icon(Icons.pending_actions,
-                                color: Colors.white, size: 30),
-                            const SizedBox(height: 6),
-                            Text(
-                              '$_pendingTaskCount',
-                              style: const TextStyle(
-                                fontSize: 26,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const TaskListScreen(
+                                initialStatusFilter: 'en_cours'),
+                          ),
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Card(
+                        color: AppTheme.warningColor,
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            children: [
+                              const Icon(Icons.pending_actions,
+                                  color: Colors.white, size: 30),
+                              const SizedBox(height: 6),
+                              Text(
+                                '$_pendingTaskCount',
+                                style: const TextStyle(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
                               ),
-                            ),
-                            const Text(
-                              'En cours',
-                              style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12),
-                            ),
-                          ],
+                              Text(
+                                l10n.enCours,
+                                style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -294,30 +370,42 @@ class _HomeScreenState extends State<HomeScreen> {
                   // Carte tâches terminées
                   Expanded(
                     flex: 4,
-                    child: Card(
-                      color: AppTheme.successColor,
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          children: [
-                            const Icon(Icons.check_circle,
-                                color: Colors.white, size: 30),
-                            const SizedBox(height: 6),
-                            Text(
-                              '$_doneTaskCount',
-                              style: const TextStyle(
-                                fontSize: 26,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const TaskListScreen(
+                                initialStatusFilter: 'terminee'),
+                          ),
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Card(
+                        color: AppTheme.successColor,
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            children: [
+                              const Icon(Icons.check_circle,
+                                  color: Colors.white, size: 30),
+                              const SizedBox(height: 6),
+                              Text(
+                                '$_doneTaskCount',
+                                style: const TextStyle(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
                               ),
-                            ),
-                            const Text(
-                              'Terminées',
-                              style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12),
-                            ),
-                          ],
+                              Text(
+                                l10n.terminees,
+                                style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -325,30 +413,42 @@ class _HomeScreenState extends State<HomeScreen> {
                   // Carte total
                   Expanded(
                     flex: 3,
-                    child: Card(
-                      color: AppTheme.primaryColor,
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          children: [
-                            const Icon(Icons.assignment,
-                                color: Colors.white, size: 30),
-                            const SizedBox(height: 6),
-                            Text(
-                              '$_totalTaskCount',
-                              style: const TextStyle(
-                                fontSize: 26,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const TaskListScreen(
+                                initialStatusFilter: 'toutes'),
+                          ),
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Card(
+                        color: AppTheme.primaryColor,
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            children: [
+                              const Icon(Icons.assignment,
+                                  color: Colors.white, size: 30),
+                              const SizedBox(height: 6),
+                              Text(
+                                '$_totalTaskCount',
+                                style: const TextStyle(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
                               ),
-                            ),
-                            const Text(
-                              'Total',
-                              style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12),
-                            ),
-                          ],
+                              Text(
+                                l10n.total,
+                                style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -359,9 +459,9 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 24),
 
               // Menu rapide
-              const Text(
-                'Accès rapide',
-                style: TextStyle(
+              Text(
+                l10n.accesRapide,
+                style: const TextStyle(
                     fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
@@ -376,7 +476,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   _buildQuickAction(
                     icon: Icons.add_task,
-                    label: 'Nouvelle\ntâche',
+                    label: l10n.nouvelleTache,
                     color: AppTheme.secondaryColor,
                     onTap: () {
                       Navigator.push(
@@ -389,7 +489,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   _buildQuickAction(
                     icon: Icons.list_alt,
-                    label: 'Liste des\ntâches',
+                    label: l10n.listeDesTaches,
                     color: AppTheme.primaryColor,
                     onTap: () {
                       Navigator.push(
@@ -402,7 +502,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   _buildQuickAction(
                     icon: Icons.calendar_month,
-                    label: 'Calendrier',
+                    label: l10n.calendrier,
                     color: AppTheme.warningColor,
                     onTap: () {
                       Navigator.push(
@@ -415,7 +515,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   _buildQuickAction(
                     icon: Icons.assessment,
-                    label: 'Rapports',
+                    label: l10n.rapports,
                     color: Colors.deepPurple,
                     onTap: () {
                       Navigator.push(
@@ -426,48 +526,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                     },
                   ),
-                  if (isAdmin)
-                    _buildQuickAction(
-                      icon: Icons.archive,
-                      label: 'Archives',
-                      color: AppTheme.archiveColor,
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) =>
-                                  const ArchiveScreen()),
-                        );
-                      },
-                    ),
-                  if (isAdmin)
-                    _buildQuickAction(
-                      icon: Icons.apartment,
-                      label: 'Immeubles',
-                      color: Colors.blueGrey,
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) =>
-                                  const ImmeubleManagementScreen()),
-                        );
-                      },
-                    ),
-                  if (isAdmin)
-                    _buildQuickAction(
-                      icon: Icons.people,
-                      label: 'Utilisateurs',
-                      color: Colors.teal,
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) =>
-                                  const UserManagementScreen()),
-                        );
-                      },
-                    ),
                 ],
               ),
             ],
@@ -489,17 +547,20 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 36, color: color),
-              const SizedBox(height: 8),
+              Icon(icon, size: 32, color: color),
+              const SizedBox(height: 6),
               Text(
                 label,
                 textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: color,
                 ),

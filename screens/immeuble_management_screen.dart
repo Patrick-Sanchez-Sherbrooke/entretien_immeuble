@@ -1,16 +1,17 @@
 // lib/screens/immeuble_management_screen.dart
 // ============================================
-// ÉCRAN GESTION DES IMMEUBLES (ADMIN UNIQUEMENT)
+// ÉCRAN GESTION DES IMMEUBLES
 // ============================================
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
 import '../models/immeuble_model.dart';
 import '../services/local_db_service.dart';
 import '../services/supabase_service.dart';
 import '../services/sync_service.dart';
-import '../services/auth_service.dart';
 import '../utils/theme.dart';
+import '../utils/error_util.dart';
 import '../widgets/app_drawer.dart';
-import '../widgets/app_text_field.dart';
 
 class ImmeubleManagementScreen extends StatefulWidget {
   const ImmeubleManagementScreen({super.key});
@@ -22,9 +23,6 @@ class ImmeubleManagementScreen extends StatefulWidget {
 
 class _ImmeubleManagementScreenState extends State<ImmeubleManagementScreen> {
   final LocalDbService _localDb = LocalDbService();
-  final SupabaseService _supabase = SupabaseService();
-  final AuthService _auth = AuthService();
-
   List<ImmeubleModel> _immeubles = [];
   bool _isLoading = true;
   bool _showArchived = false;
@@ -37,129 +35,23 @@ class _ImmeubleManagementScreenState extends State<ImmeubleManagementScreen> {
 
   Future<void> _loadImmeubles() async {
     setState(() => _isLoading = true);
-
-    List<ImmeubleModel> immeubles;
-    if (_showArchived) {
-      immeubles = await _localDb.getAllImmeubles();
-    } else {
-      immeubles = await _localDb.getActiveImmeubles();
-    }
-
-    if (mounted) {
-      setState(() {
-        _immeubles = immeubles;
-        _isLoading = false;
-      });
-    }
-  }
-
-  // ============================================
-  // AJOUTER UN IMMEUBLE
-  // ============================================
-  void _showAddDialog() {
-    final nomController = TextEditingController();
-    final adresseController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.add_business, color: AppTheme.primaryColor),
-            SizedBox(width: 8),
-            Text('Ajouter un immeuble'),
-          ],
-        ),
-        content: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppTextField(
-                controller: nomController,
-                labelText: 'Nom de l\'immeuble *',
-                prefixIcon: const Icon(Icons.apartment),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Veuillez entrer un nom';
-                  }
-                  // Vérifier si le nom existe déjà
-                  if (_immeubles.any((i) =>
-                      i.nom.toLowerCase() == value.trim().toLowerCase())) {
-                    return 'Ce nom existe déjà';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 12),
-              AppTextField(
-                controller: adresseController,
-                labelText: 'Adresse',
-                prefixIcon: const Icon(Icons.location_on),
-                maxLines: 2,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (formKey.currentState!.validate()) {
-                await _addImmeuble(
-                  nomController.text.trim(),
-                  adresseController.text.trim(),
-                );
-                if (mounted) Navigator.pop(context);
-              }
-            },
-            child: const Text('Ajouter'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _addImmeuble(String nom, String adresse) async {
     try {
-      final id = DateTime.now().millisecondsSinceEpoch.toString();
-      final immeuble = ImmeubleModel(
-        id: id,
-        nom: nom,
-        adresse: adresse,
-      );
-
-      // Sauvegarder en local
-      await _localDb.insertImmeuble(immeuble);
-
-      // Synchroniser si connecté
-      if (await SyncService().hasConnection()) {
-        try {
-          await _supabase.upsertImmeuble(immeuble);
-        } catch (e) {
-          // Sera synchronisé plus tard
-        }
-      }
-
-      await _loadImmeubles();
-
+      final list = _showArchived
+          ? await _localDb.getAllImmeubles()
+          : await _localDb.getActiveImmeubles();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ Immeuble "$nom" ajouté'),
-            backgroundColor: AppTheme.successColor,
-          ),
-        );
+        setState(() {
+          _immeubles = list;
+          _isLoading = false;
+        });
       }
     } catch (e) {
       if (mounted) {
+        setState(() => _isLoading = false);
+        final l10n = AppLocalizations.of(context)!;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ Erreur: $e'),
+            content: Text(l10n.erreurDb(e)),
             backgroundColor: AppTheme.errorColor,
           ),
         );
@@ -167,253 +59,74 @@ class _ImmeubleManagementScreenState extends State<ImmeubleManagementScreen> {
     }
   }
 
-  // ============================================
-  // MODIFIER UN IMMEUBLE
-  // ============================================
-  void _showEditDialog(ImmeubleModel immeuble) {
-    final nomController = TextEditingController(text: immeuble.nom);
-    final adresseController = TextEditingController(text: immeuble.adresse);
-    final formKey = GlobalKey<FormState>();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.edit, color: AppTheme.primaryColor),
-            SizedBox(width: 8),
-            Text('Modifier l\'immeuble'),
-          ],
-        ),
-        content: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppTextField(
-                controller: nomController,
-                labelText: 'Nom de l\'immeuble *',
-                prefixIcon: const Icon(Icons.apartment),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Veuillez entrer un nom';
-                  }
-                  // Vérifier si le nom existe déjà (sauf pour l'immeuble en cours)
-                  if (_immeubles.any((i) =>
-                      i.id != immeuble.id &&
-                      i.nom.toLowerCase() == value.trim().toLowerCase())) {
-                    return 'Ce nom existe déjà';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 12),
-              AppTextField(
-                controller: adresseController,
-                labelText: 'Adresse',
-                prefixIcon: const Icon(Icons.location_on),
-                maxLines: 2,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (formKey.currentState!.validate()) {
-                await _updateImmeuble(
-                  immeuble,
-                  nomController.text.trim(),
-                  adresseController.text.trim(),
-                );
-                if (mounted) Navigator.pop(context);
-              }
-            },
-            child: const Text('Modifier'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _updateImmeuble(
-      ImmeubleModel immeuble, String newNom, String newAdresse) async {
-    try {
-      final oldNom = immeuble.nom;
-      final updatedImmeuble = ImmeubleModel(
-        id: immeuble.id,
-        nom: newNom,
-        adresse: newAdresse,
-        archived: immeuble.archived,
-        createdAt: immeuble.createdAt,
-      );
-
-      // Mettre à jour en local
-      await _localDb.updateImmeuble(updatedImmeuble);
-
-      // Si le nom a changé, mettre à jour toutes les tâches associées
-      if (oldNom != newNom) {
-        await _localDb.updateTasksImmeubleName(oldNom, newNom);
-      }
-
-      // Synchroniser si connecté
-      if (await SyncService().hasConnection()) {
-        try {
-          await _supabase.upsertImmeuble(updatedImmeuble);
-          // Mettre à jour le nom dans les tâches sur le serveur
-          if (oldNom != newNom) {
-            await _supabase.updateTasksImmeubleName(oldNom, newNom);
-          }
-        } catch (e) {
-          // Sera synchronisé plus tard
-        }
-      }
-
-      await _loadImmeubles();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ Immeuble "$newNom" modifié'),
-            backgroundColor: AppTheme.successColor,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Erreur: $e'),
-            backgroundColor: AppTheme.errorColor,
-          ),
-        );
-      }
-    }
-  }
-
-  // ============================================
-  // ARCHIVER / DÉSARCHIVER UN IMMEUBLE
-  // ============================================
   Future<void> _toggleArchive(ImmeubleModel immeuble) async {
+    final l10n = AppLocalizations.of(context)!;
     final newArchived = !immeuble.archived;
-    final action = newArchived ? 'Archiver' : 'Désarchiver';
-
-    // Vérifier s'il y a des tâches actives liées à cet immeuble
-    if (newArchived) {
-      final activeTasks =
-          await _localDb.getActiveTasksForImmeuble(immeuble.nom);
-      if (activeTasks.isNotEmpty) {
-        if (mounted) {
-          final confirm = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('Attention'),
-              content: Text(
-                'Cet immeuble a ${activeTasks.length} tâche(s) active(s).\n\n'
-                'L\'archivage empêchera la création de nouvelles tâches pour cet immeuble.\n\n'
-                'Les tâches existantes ne seront pas affectées.\n\n'
-                'Voulez-vous continuer ?',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Annuler'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.warningColor,
-                  ),
-                  onPressed: () => Navigator.pop(context, true),
-                  child: Text(action),
-                ),
-              ],
-            ),
-          );
-          if (confirm != true) return;
-        }
-      } else {
-        final confirm = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text('$action l\'immeuble ?'),
-            content: Text('Voulez-vous $action "${immeuble.nom}" ?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Annuler'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: Text(action),
-              ),
-            ],
+    final action = newArchived ? l10n.archiver : l10n.desarchiver;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(newArchived ? l10n.archiverImmeubleConfirm : l10n.desarchiverImmeubleConfirm),
+        content: Text(
+            newArchived ? l10n.archiverImmeubleQuestion(immeuble.nom) : l10n.desarchiverImmeubleQuestion(immeuble.nom)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.annuler),
           ),
-        );
-        if (confirm != true) return;
-      }
-    } else {
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('$action l\'immeuble ?'),
-          content: Text('Voulez-vous $action "${immeuble.nom}" ?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Annuler'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(action),
-            ),
-          ],
-        ),
-      );
-      if (confirm != true) return;
-    }
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
 
     try {
-      final updatedImmeuble = ImmeubleModel(
+      final updated = ImmeubleModel(
         id: immeuble.id,
         nom: immeuble.nom,
         adresse: immeuble.adresse,
         archived: newArchived,
         createdAt: immeuble.createdAt,
       );
+      await _localDb.updateImmeuble(updated);
 
-      await _localDb.updateImmeuble(updatedImmeuble);
-
-      // Synchroniser si connecté
+      // Envoi immédiat vers Supabase après validation
+      String? syncError;
       if (await SyncService().hasConnection()) {
         try {
-          await _supabase.upsertImmeuble(updatedImmeuble);
-        } catch (e) {
-          // Sera synchronisé plus tard
-        }
+          await SupabaseService().upsertImmeuble(updated);
+} catch (e) {
+        syncError = formatSyncError(e);
+      }
+      } else {
+        syncError = l10n.pasDeConnexion;
       }
 
       await _loadImmeubles();
-
       if (mounted) {
+        final l10n2 = AppLocalizations.of(context)!;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(newArchived
-                ? '✅ Immeuble archivé'
-                : '✅ Immeuble désarchivé'),
-            backgroundColor:
-                newArchived ? AppTheme.archiveColor : AppTheme.successColor,
+            content: Text(
+              syncError == null
+                  ? (newArchived ? l10n2.immeubleArchive : l10n2.immeubleDesarchive)
+                  : '${newArchived ? l10n2.immeubleArchive : l10n2.immeubleDesarchive} (${l10n2.distantLabel} : $syncError)',
+            ),
+            backgroundColor: syncError == null
+                ? (newArchived ? AppTheme.archiveColor : AppTheme.successColor)
+                : AppTheme.warningColor,
           ),
         );
       }
     } catch (e) {
       if (mounted) {
+        final l10n2 = AppLocalizations.of(context)!;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ Erreur: $e'),
+            content: Text('${l10n2.erreurPrefix}${formatSyncError(e)}'),
             backgroundColor: AppTheme.errorColor,
           ),
         );
@@ -421,119 +134,186 @@ class _ImmeubleManagementScreenState extends State<ImmeubleManagementScreen> {
     }
   }
 
-  // ============================================
-  // SUPPRIMER UN IMMEUBLE
-  // ============================================
-  Future<void> _deleteImmeuble(ImmeubleModel immeuble) async {
-    // Vérifier s'il y a des tâches liées
-    final allTasks = await _localDb.getAllTasksForImmeuble(immeuble.nom);
-
-    if (allTasks.isNotEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '❌ Impossible de supprimer : ${allTasks.length} tâche(s) liée(s) à cet immeuble.\n'
-              'Archivez-le plutôt.',
-            ),
-            backgroundColor: AppTheme.errorColor,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
-      return;
-    }
-
-    final confirm = await showDialog<bool>(
+  Future<void> _showFormDialog({ImmeubleModel? existing}) async {
+    final l10n = AppLocalizations.of(context)!;
+    final nomController = TextEditingController(text: existing?.nom ?? '');
+    final adresseController =
+        TextEditingController(text: existing?.adresse ?? '');
+    final result = await showDialog<({String nom, String adresse})>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Supprimer l\'immeuble ?'),
-        content: Text(
-          'Voulez-vous vraiment supprimer "${immeuble.nom}" ?\n\n'
-          'Cette action est irréversible.',
+      builder: (ctx) => AlertDialog(
+        title: Text(existing == null ? l10n.nouvelImmeuble : l10n.modifierImmeuble),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nomController,
+                decoration: InputDecoration(
+                  labelText: l10n.nom,
+                  hintText: l10n.exNom,
+                ),
+                textCapitalization: TextCapitalization.words,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: adresseController,
+                decoration: InputDecoration(
+                  labelText: l10n.adresse,
+                  hintText: l10n.exAdresse,
+                ),
+                textCapitalization: TextCapitalization.words,
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Annuler'),
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(l10n.annuler),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.errorColor,
-            ),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Supprimer'),
+            onPressed: () {
+              final nom = nomController.text.trim();
+              if (nom.isEmpty) return;
+              Navigator.pop(ctx, (nom: nom, adresse: adresseController.text.trim()));
+            },
+            child: Text(l10n.enregistrer),
           ),
         ],
       ),
     );
 
-    if (confirm != true) return;
+    if (result == null) return;
 
-    try {
-      await _localDb.deleteImmeuble(immeuble.id);
+    final nom = result.nom;
+    final adresse = result.adresse;
+    if (nom.isEmpty) return;
 
-      // Supprimer sur le serveur si connecté
-      if (await SyncService().hasConnection()) {
-        try {
-          await _supabase.deleteImmeuble(immeuble.id);
-        } catch (e) {
-          // Ignorer
+    if (existing != null) {
+      try {
+        final updated = ImmeubleModel(
+          id: existing.id,
+          nom: nom,
+          adresse: adresse,
+          archived: existing.archived,
+          createdAt: existing.createdAt,
+        );
+        await _localDb.updateImmeuble(updated);
+        String? syncError;
+        if (await SyncService().hasConnection()) {
+          try {
+            await SupabaseService().upsertImmeuble(updated);
+          } catch (e) {
+            syncError = formatSyncError(e);
+          }
+        } else {
+          syncError = l10n.pasDeConnexion;
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                syncError == null
+                    ? l10n.immeubleModifie
+                    : l10n.immeubleModifieLocalDistant(syncError),
+              ),
+              backgroundColor: syncError == null
+                  ? AppTheme.successColor
+                  : AppTheme.warningColor,
+            ),
+          );
+        }
+        await _loadImmeubles();
+      } catch (e) {
+        if (mounted) {
+          final l10n2 = AppLocalizations.of(context)!;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${l10n2.erreurPrefix}${formatSyncError(e)}'),
+              backgroundColor: AppTheme.errorColor,
+            ),
+          );
         }
       }
-
-      await _loadImmeubles();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ Immeuble "${immeuble.nom}" supprimé'),
-            backgroundColor: AppTheme.errorColor,
-          ),
+    } else {
+      try {
+        final newImmeuble = ImmeubleModel(
+          id: const Uuid().v4(),
+          nom: nom,
+          adresse: adresse,
         );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Erreur: $e'),
-            backgroundColor: AppTheme.errorColor,
-          ),
-        );
+        await _localDb.insertImmeuble(newImmeuble);
+        String? syncError;
+        if (await SyncService().hasConnection()) {
+          try {
+            await SupabaseService().upsertImmeuble(newImmeuble);
+          } catch (e) {
+            syncError = formatSyncError(e);
+          }
+        } else {
+          syncError = l10n.pasDeConnexion;
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                syncError == null
+                    ? l10n.immeubleAjoute
+                    : l10n.immeubleAjouteLocalDistant(syncError),
+              ),
+              backgroundColor: syncError == null
+                  ? AppTheme.successColor
+                  : AppTheme.warningColor,
+            ),
+          );
+        }
+        await _loadImmeubles();
+      } catch (e) {
+        if (mounted) {
+          final l10n2 = AppLocalizations.of(context)!;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${l10n2.erreurPrefix}${formatSyncError(e)}'),
+              backgroundColor: AppTheme.errorColor,
+            ),
+          );
+        }
       }
     }
   }
 
-  // ============================================
-  // CONSTRUCTION DE L'INTERFACE
-  // ============================================
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Gestion des immeubles'),
+        title: Text(l10n.gestionDesImmeubles),
         actions: [
           FilterChip(
             label: Text(
-              _showArchived ? 'Tous' : 'Actifs',
-              style: const TextStyle(color: Colors.white, fontSize: 12),
+              _showArchived ? l10n.toutes : l10n.actifs,
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             selected: _showArchived,
             onSelected: (value) {
               setState(() => _showArchived = value);
               _loadImmeubles();
             },
-            backgroundColor: Colors.white24,
-            selectedColor: Colors.white38,
-            checkmarkColor: Colors.white,
+            backgroundColor: Colors.white.withValues(alpha: 0.9),
+            selectedColor: AppTheme.primaryColor.withValues(alpha: 0.3),
+            checkmarkColor: AppTheme.primaryColor,
           ),
           const SizedBox(width: 8),
         ],
       ),
       drawer: const AppDrawer(),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showAddDialog,
-        tooltip: 'Ajouter un immeuble',
+        onPressed: () => _showFormDialog(),
         child: const Icon(Icons.add_business),
       ),
       body: _isLoading
@@ -545,20 +325,14 @@ class _ImmeubleManagementScreenState extends State<ImmeubleManagementScreen> {
                     children: [
                       Icon(Icons.apartment,
                           size: 80,
-                          color: AppTheme.textSecondary.withOpacity(0.3)),
+                          color: AppTheme.textSecondary.withValues(alpha: 0.3)),
                       const SizedBox(height: 16),
-                      const Text(
-                        'Aucun immeuble',
-                        style: TextStyle(
+                      Text(
+                        l10n.aucunImmeuble,
+                        style: const TextStyle(
                           fontSize: 18,
                           color: AppTheme.textSecondary,
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: _showAddDialog,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Ajouter un immeuble'),
                       ),
                     ],
                   ),
@@ -578,6 +352,7 @@ class _ImmeubleManagementScreenState extends State<ImmeubleManagementScreen> {
   }
 
   Widget _buildImmeubleCard(ImmeubleModel immeuble) {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       child: ListTile(
         leading: CircleAvatar(
@@ -591,51 +366,30 @@ class _ImmeubleManagementScreenState extends State<ImmeubleManagementScreen> {
           style: TextStyle(
             fontWeight: FontWeight.w600,
             color: immeuble.archived ? AppTheme.archiveColor : null,
-            decoration:
-                immeuble.archived ? TextDecoration.lineThrough : null,
+            decoration: immeuble.archived
+                ? TextDecoration.lineThrough
+                : null,
           ),
         ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (immeuble.adresse.isNotEmpty)
-              Text(
-                immeuble.adresse,
-                style: const TextStyle(fontSize: 13),
-              ),
-            if (immeuble.archived)
-              const Text(
-                'Archivé',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppTheme.archiveColor,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-          ],
-        ),
+        subtitle: immeuble.adresse.isNotEmpty
+            ? Text(immeuble.adresse)
+            : null,
         trailing: PopupMenuButton<String>(
           onSelected: (value) {
-            switch (value) {
-              case 'edit':
-                _showEditDialog(immeuble);
-                break;
-              case 'archive':
-                _toggleArchive(immeuble);
-                break;
-              case 'delete':
-                _deleteImmeuble(immeuble);
-                break;
+            if (value == 'edit') {
+              _showFormDialog(existing: immeuble);
+            } else if (value == 'archive') {
+              _toggleArchive(immeuble);
             }
           },
           itemBuilder: (context) => [
-            const PopupMenuItem(
+            PopupMenuItem(
               value: 'edit',
               child: Row(
                 children: [
-                  Icon(Icons.edit, color: AppTheme.primaryColor),
-                  SizedBox(width: 8),
-                  Text('Modifier'),
+                  const Icon(Icons.edit, color: AppTheme.primaryColor),
+                  const SizedBox(width: 8),
+                  Text(l10n.modifier),
                 ],
               ),
             ),
@@ -650,17 +404,7 @@ class _ImmeubleManagementScreenState extends State<ImmeubleManagementScreen> {
                         : AppTheme.warningColor,
                   ),
                   const SizedBox(width: 8),
-                  Text(immeuble.archived ? 'Désarchiver' : 'Archiver'),
-                ],
-              ),
-            ),
-            const PopupMenuItem(
-              value: 'delete',
-              child: Row(
-                children: [
-                  Icon(Icons.delete, color: AppTheme.errorColor),
-                  SizedBox(width: 8),
-                  Text('Supprimer'),
+                  Text(immeuble.archived ? l10n.desarchiver : l10n.archiver),
                 ],
               ),
             ),

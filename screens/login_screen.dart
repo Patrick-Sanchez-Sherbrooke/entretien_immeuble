@@ -4,6 +4,7 @@
 // ============================================
 
 import 'package:flutter/material.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
 import '../services/auth_service.dart';
 import '../services/sync_service.dart';
 import '../services/notification_service.dart';
@@ -64,12 +65,12 @@ class _LoginScreenState extends State<LoginScreen> {
         }
       } else {
         setState(() {
-          _errorMessage = 'Identifiant ou mot de passe incorrect';
+          _errorMessage = AppLocalizations.of(context)!.loginErrorBadCredentials;
         });
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Erreur de connexion. Vérifiez votre réseau.';
+        _errorMessage = AppLocalizations.of(context)!.loginErrorNetwork;
       });
     } finally {
       if (mounted) {
@@ -93,34 +94,48 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Logo / Icône
+                  // Logo de l'application dans le rond bleu (assets/logo.png)
                   Container(
-                    padding: const EdgeInsets.all(20),
+                    width: 120,
+                    height: 120,
                     decoration: BoxDecoration(
-                      color: AppTheme.primaryColor.withValues(alpha: 25),
+                      color: AppTheme.primaryColor.withValues(alpha: 0.25),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
-                      Icons.apartment,
-                      size: 80,
-                      color: AppTheme.primaryColor,
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/logo.png',
+                        width: 120,
+                        height: 120,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Center(
+                          child: Icon(
+                            Icons.apartment,
+                            size: 80,
+                            color: AppTheme.primaryColor,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 24),
 
                   // Titre
-                  const Text(
-                    'Entretien Immeuble',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.primaryColor,
+                  Center(
+                    child: Text(
+                      AppLocalizations.of(context)!.loginTitle,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.primaryColor,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'Connectez-vous pour continuer',
-                    style: TextStyle(
+                  Text(
+                    AppLocalizations.of(context)!.loginSubtitle,
+                    style: const TextStyle(
                       fontSize: 16,
                       color: AppTheme.textSecondary,
                     ),
@@ -130,14 +145,18 @@ class _LoginScreenState extends State<LoginScreen> {
                   // Message d'erreur
                   if (_errorMessage != null) ...[
                     Container(
+                      width: double.infinity,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: AppTheme.errorColor.withValues(alpha: 25),
+                        color: AppTheme.errorColor.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
-                            color: AppTheme.errorColor.withValues(alpha: 77)),
+                          color: AppTheme.errorColor,
+                          width: 1.2,
+                        ),
                       ),
                       child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Icon(Icons.error_outline,
                               color: AppTheme.errorColor),
@@ -145,8 +164,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           Expanded(
                             child: Text(
                               _errorMessage!,
-                              style:
-                                  const TextStyle(color: AppTheme.errorColor),
+                              style: const TextStyle(
+                                color: AppTheme.errorColor,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ],
@@ -158,11 +180,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   // Champ identifiant
                   AppTextField(
                     controller: _identifiantController,
-                    labelText: 'Identifiant',
+                    labelText: AppLocalizations.of(context)!.identifiant,
                     prefixIcon: const Icon(Icons.person),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
-                        return 'Veuillez entrer votre identifiant';
+                        return AppLocalizations.of(context)!.pleaseEnterIdentifiant;
                       }
                       return null;
                     },
@@ -173,7 +195,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   AppTextField(
                     controller: _passwordController,
                     obscureText: _obscurePassword,
-                    labelText: 'Mot de passe',
+                    labelText: AppLocalizations.of(context)!.motDePasse,
                     prefixIcon: const Icon(Icons.lock),
                     suffixIcon: IconButton(
                       icon: Icon(_obscurePassword
@@ -187,7 +209,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     validator: (value) {
                       if (value == null || value.isEmpty) {
-                        return 'Veuillez entrer votre mot de passe';
+                        return AppLocalizations.of(context)!.pleaseEnterPassword;
                       }
                       return null;
                     },
@@ -210,9 +232,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 strokeWidth: 2,
                               ),
                             )
-                          : const Text(
-                              'Se connecter',
-                              style: TextStyle(fontSize: 18),
+                          : Text(
+                              AppLocalizations.of(context)!.seConnecter,
+                              style: const TextStyle(fontSize: 18),
                             ),
                     ),
                   ),

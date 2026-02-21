@@ -18,6 +18,7 @@ class AppConstants {
   static const String tableTasks = 'tasks';
   static const String tableTaskHistory = 'task_history';
   static const String tableNotifications = 'pending_notifications';
+  static const String tableUserFcmTokens = 'user_fcm_tokens';
   static const String storageBucket = 'task-photos';
 
   // ============================================
@@ -25,6 +26,7 @@ class AppConstants {
   // ============================================
   static const String roleAdmin = 'administrateur';
   static const String roleExecutant = 'executant';
+  static const String rolePlanificateur = 'planificateur';
 
   // ============================================
   // STATUS DE SYNCHRONISATION

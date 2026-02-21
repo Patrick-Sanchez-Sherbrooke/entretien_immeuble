@@ -5,11 +5,10 @@
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
+import '../models/immeuble_model.dart';
 import '../models/task_model.dart';
-import '../models/task_history_model.dart';
 import '../services/local_db_service.dart';
-import '../services/supabase_service.dart';
-import '../services/sync_service.dart';
 import '../utils/theme.dart';
 import 'task_form_screen.dart';
 import 'task_history_screen.dart';
@@ -30,6 +29,8 @@ class TaskDetailScreen extends StatefulWidget {
 
 class _TaskDetailScreenState extends State<TaskDetailScreen> {
   late TaskModel _task;
+  ImmeubleModel? _immeuble;
+  String? _creatorName;
 
   @override
   void initState() {
@@ -49,21 +50,36 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   Future<void> _refreshTask() async {
-    final localTask = await LocalDbService().getTaskById(_task.id);
+    final localDb = LocalDbService();
+    final localTask = await localDb.getTaskById(_task.id);
     if (localTask != null && mounted) {
-      setState(() => _task = localTask);
+      final immeuble =
+          await localDb.getImmeubleById(localTask.immeuble);
+      String? creatorName;
+      if (localTask.createdBy.isNotEmpty) {
+        final creator =
+            await localDb.getUserById(localTask.createdBy);
+        creatorName = creator?.nomComplet;
+      }
+      if (!mounted) return;
+      setState(() {
+        _task = localTask;
+        _immeuble = immeuble;
+        _creatorName = creatorName;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
-        title: Text('Tâche ${_task.displayNumber}'),
+        title: Text(l10n.detailTache(_task.displayNumber)),
         actions: [
           IconButton(
             icon: const Icon(Icons.edit),
-            tooltip: 'Modifier',
+            tooltip: l10n.modifier,
             onPressed: () {
               Navigator.push(
                 context,
@@ -75,7 +91,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.history),
-            tooltip: 'Historique',
+            tooltip: l10n.historique,
             onPressed: () {
               Navigator.push(
                 context,
@@ -99,8 +115,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                 decoration: BoxDecoration(
                   color: _task.done
-                      ? AppTheme.successColor.withOpacity(0.1)
-                      : AppTheme.warningColor.withOpacity(0.1),
+                      ? AppTheme.successColor.withValues(alpha: 0.1)
+                      : AppTheme.warningColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
                     color: _task.done
@@ -109,7 +125,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   ),
                 ),
                 child: Text(
-                  _task.statusText,
+                  _task.archived
+                      ? l10n.statusArchivee
+                      : _task.done
+                          ? l10n.terminees
+                          : l10n.enCours,
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -123,48 +143,56 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             const SizedBox(height: 20),
 
             // Informations principales
-            _buildInfoCard('Immeuble', _task.immeuble, Icons.apartment),
-            if (_task.etage.isNotEmpty)
-              _buildInfoCard('Étage', _task.etage, Icons.layers),
-            if (_task.chambre.isNotEmpty)
-              _buildInfoCard('Chambre', _task.chambre, Icons.door_front_door),
-            _buildInfoCard('Description', _task.description, Icons.description),
             _buildInfoCard(
-              'Date de création',
-              DateFormat('dd/MM/yyyy à HH:mm').format(_task.createdAt),
+              l10n.immeuble,
+              _immeuble?.nom ?? _task.immeuble,
+              Icons.apartment,
+            ),
+            if (_task.etage.isNotEmpty)
+              _buildInfoCard(l10n.etage, _task.etage, Icons.layers),
+            if (_task.chambre.isNotEmpty)
+              _buildInfoCard(l10n.chambre, _task.chambre, Icons.door_front_door),
+            _buildInfoCard(l10n.description, _task.description, Icons.description),
+            _buildInfoCard(
+              l10n.dateCreationDetail,
+              '${l10n.dateEtHeure(DateFormat('dd/MM/yyyy').format(_task.createdAt), DateFormat('HH:mm').format(_task.createdAt))}'
+              '${_creatorName != null && _creatorName!.isNotEmpty ? ' — $_creatorName' : ''}',
               Icons.date_range,
             ),
 
             if (_task.plannedDate != null)
               _buildInfoCard(
-                'Date planifiée',
+                l10n.datePlanifiee,
                 DateFormat('dd/MM/yyyy').format(_task.plannedDate!),
                 Icons.calendar_today,
               ),
 
             if (_task.done) ...[
               const Divider(height: 32),
-              const Text(
-                'Exécution',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              Text(
+                l10n.execution,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               if (_task.doneDate != null)
                 _buildInfoCard(
-                  'Date d\'exécution',
+                  l10n.dateExecutionLong,
                   DateFormat('dd/MM/yyyy').format(_task.doneDate!),
                   Icons.event_available,
                 ),
               if (_task.doneBy.isNotEmpty)
-                _buildInfoCard('Exécutant', _task.doneBy, Icons.person),
+                _buildInfoCard(l10n.executant, _task.doneBy, Icons.person),
+              if (_task.executionNote.isNotEmpty)
+                _buildInfoCard(
+                    l10n.noteExecution, _task.executionNote, Icons.notes),
             ],
 
             // Photo
             if (_task.photoUrl.isNotEmpty) ...[
               const Divider(height: 32),
-              const Text(
-                'Photo',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              Text(
+                l10n.photo,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               ClipRRect(

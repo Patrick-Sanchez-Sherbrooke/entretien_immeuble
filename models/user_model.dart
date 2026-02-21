@@ -3,6 +3,8 @@
 // MODÈLE DE DONNÉES POUR UN UTILISATEUR
 // ============================================
 
+import '../utils/constants.dart';
+
 class UserModel {
   final String id;
   final String identifiant;
@@ -90,7 +92,13 @@ class UserModel {
   String get nomComplet => '$prenom $nom';
 
   // Vérifier si administrateur
-  bool get isAdmin => role == 'administrateur';
+  bool get isAdmin => role == AppConstants.roleAdmin;
+
+  // Vérifier si exécutant
+  bool get isExecutant => role == AppConstants.roleExecutant;
+
+  // Vérifier si planificateur
+  bool get isPlanificateur => role == AppConstants.rolePlanificateur;
 
   // Copier avec modifications
   UserModel copyWith({

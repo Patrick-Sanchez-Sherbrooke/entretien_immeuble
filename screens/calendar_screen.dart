@@ -5,6 +5,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../models/task_model.dart';
 import '../services/local_db_service.dart';
@@ -66,9 +67,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final locale = Localizations.localeOf(context);
+    final calendarLocale = switch (locale.languageCode) {
+      'en' => 'en_US',
+      'es' => 'es_ES',
+      _ => 'fr_FR',
+    };
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Calendrier'),
+        title: Text(l10n.calendrier),
       ),
       drawer: const AppDrawer(),
       floatingActionButton: FloatingActionButton(
@@ -90,7 +98,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               lastDay: DateTime(2030),
               focusedDay: _focusedDay,
               calendarFormat: _calendarFormat,
-              locale: 'fr_FR',
+              locale: calendarLocale,
               startingDayOfWeek: StartingDayOfWeek.monday,
               selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
               eventLoader: _getTasksForDay,
@@ -109,7 +117,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               },
               calendarStyle: CalendarStyle(
                 todayDecoration: BoxDecoration(
-                  color: AppTheme.primaryColor.withOpacity(0.3),
+                  color: AppTheme.primaryColor.withValues(alpha: 0.3),
                   shape: BoxShape.circle,
                 ),
                 selectedDecoration: const BoxDecoration(
@@ -131,14 +139,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
             ),
           ),
 
-          // Date sélectionnée
+          // Date sélectionnée (jour complet sous le calendrier)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(_selectedDay),
+                  DateFormat('EEEE d MMMM yyyy', calendarLocale).format(_selectedDay),
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -146,7 +154,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   ),
                 ),
                 Text(
-                  '${_selectedDayTasks.length} tâche(s)',
+                  l10n.tachesCount(_selectedDayTasks.length),
                   style: const TextStyle(color: AppTheme.textSecondary),
                 ),
               ],
@@ -162,11 +170,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       children: [
                         Icon(Icons.event_available,
                             size: 60,
-                            color: AppTheme.textSecondary.withOpacity(0.3)),
+                            color: AppTheme.textSecondary.withValues(alpha: 0.3)),
                         const SizedBox(height: 12),
-                        const Text(
-                          'Aucune tâche planifiée ce jour',
-                          style: TextStyle(color: AppTheme.textSecondary),
+                        Text(
+                          l10n.aucuneTachePlanifiee,
+                          style: const TextStyle(color: AppTheme.textSecondary),
                         ),
                       ],
                     ),

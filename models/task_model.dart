@@ -8,13 +8,18 @@ class TaskModel {
   final int? taskNumber;
   final DateTime createdAt;
   final DateTime updatedAt;
+  // Stocke l'ID de l'immeuble (et non plus son nom)
   final String immeuble;
   final String etage;
   final String chambre;
   final String description;
+  // Créateur de la tâche (id utilisateur)
+  final String createdBy;
   final bool done;
   final DateTime? doneDate;
   final String doneBy;
+  // Note d'exécution (commentaire lors de la réalisation)
+  final String executionNote;
   final String lastModifiedBy;
   final String photoUrl;
   final String photoLocalPath;
@@ -32,9 +37,11 @@ class TaskModel {
     this.etage = '',
     this.chambre = '',
     required this.description,
+    this.createdBy = '',
     this.done = false,
     this.doneDate,
     this.doneBy = '',
+     this.executionNote = '',
     this.lastModifiedBy = '',
     this.photoUrl = '',
     this.photoLocalPath = '',
@@ -61,11 +68,13 @@ class TaskModel {
       etage: map['etage'] ?? '',
       chambre: map['chambre'] ?? '',
       description: map['description'] ?? '',
+      createdBy: map['created_by'] ?? '',
       done: map['done'] == true || map['done'] == 1,
       doneDate: map['done_date'] != null
           ? DateTime.tryParse(map['done_date'].toString())
           : null,
       doneBy: map['done_by'] ?? '',
+      executionNote: map['execution_note'] ?? '',
       lastModifiedBy: map['last_modified_by'] ?? '',
       photoUrl: map['photo_url'] ?? '',
       photoLocalPath: map['photo_local_path'] ?? '',
@@ -78,27 +87,31 @@ class TaskModel {
     );
   }
 
-  // Pour Supabase (sans champs locaux)
+  // Pour Supabase (sans champs locaux).
+  // Les null sont retirés côté service pour éviter les violations de contraintes.
+  // Les champs requis ne doivent pas être vides (contrainte CHECK côté serveur).
   Map<String, dynamic> toMapSupabase() {
     final map = <String, dynamic>{
       'id': id,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
-      'immeuble': immeuble,
+      'immeuble': immeuble.isEmpty ? ' ' : immeuble,
       'etage': etage,
       'chambre': chambre,
-      'description': description,
+      'description': description.isEmpty ? ' ' : description,
+      'created_by': createdBy,
       'done': done,
       'done_date': doneDate?.toIso8601String(),
       'done_by': doneBy,
+      'execution_note': executionNote,
       'last_modified_by': lastModifiedBy,
       'photo_url': photoUrl,
       'archived': archived,
-      'planned_date': plannedDate?.toIso8601String()?.split('T')[0],
+      'planned_date': plannedDate?.toIso8601String().split('T')[0],
       'deleted': deleted,
     };
 
-    // Inclure le task_number s'il existe
+    // Inclure le task_number s'il existe (éviter 0 si le serveur a CHECK > 0)
     if (taskNumber != null && taskNumber! > 0) {
       map['task_number'] = taskNumber;
     }
@@ -117,14 +130,16 @@ class TaskModel {
       'etage': etage,
       'chambre': chambre,
       'description': description,
+      'created_by': createdBy,
       'done': done ? 1 : 0,
       'done_date': doneDate?.toIso8601String(),
       'done_by': doneBy,
+      'execution_note': executionNote,
       'last_modified_by': lastModifiedBy,
       'photo_url': photoUrl,
       'photo_local_path': photoLocalPath,
       'archived': archived ? 1 : 0,
-      'planned_date': plannedDate?.toIso8601String()?.split('T')[0],
+      'planned_date': plannedDate?.toIso8601String().split('T')[0],
       'deleted': deleted ? 1 : 0,
       'sync_status': syncStatus,
     };
@@ -153,9 +168,11 @@ class TaskModel {
     String? etage,
     String? chambre,
     String? description,
+    String? createdBy,
     bool? done,
     DateTime? doneDate,
     String? doneBy,
+    String? executionNote,
     String? lastModifiedBy,
     String? photoUrl,
     String? photoLocalPath,
@@ -173,9 +190,11 @@ class TaskModel {
       etage: etage ?? this.etage,
       chambre: chambre ?? this.chambre,
       description: description ?? this.description,
+      createdBy: createdBy ?? this.createdBy,
       done: done ?? this.done,
       doneDate: doneDate ?? this.doneDate,
       doneBy: doneBy ?? this.doneBy,
+      executionNote: executionNote ?? this.executionNote,
       lastModifiedBy: lastModifiedBy ?? this.lastModifiedBy,
       photoUrl: photoUrl ?? this.photoUrl,
       photoLocalPath: photoLocalPath ?? this.photoLocalPath,

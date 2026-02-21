@@ -3,9 +3,12 @@
 // SERVICE SUPABASE (SERVEUR DISTANT)
 // ============================================
 
-import '../models/immeuble_model.dart';
+import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../models/immeuble_model.dart';
 import '../models/user_model.dart';
 import '../models/task_model.dart';
 import '../models/task_history_model.dart';
@@ -17,6 +20,12 @@ class SupabaseService {
   SupabaseService._internal();
 
   SupabaseClient get client => Supabase.instance.client;
+
+  /// Retire les entrées null du map pour éviter les violations de contraintes
+  /// (NOT NULL ou CHECK) côté Supabase/Postgres.
+  static Map<String, dynamic> _removeNulls(Map<String, dynamic> map) {
+    return Map.fromEntries(map.entries.where((e) => e.value != null));
+  }
 
   // ============================================
   // UTILISATEURS
@@ -40,10 +49,21 @@ class SupabaseService {
     return UserModel.fromMap(response);
   }
 
+  /// Insertion d'un nouvel utilisateur (création).
+  Future<void> insertUser(UserModel user) async {
+    await client
+        .from(AppConstants.tableProfiles)
+        .insert(user.toMapSupabase());
+  }
+
+  /// Mise à jour ou insertion (synchronisation). Utiliser insertUser pour la création.
   Future<void> upsertUser(UserModel user) async {
     await client
         .from(AppConstants.tableProfiles)
-        .upsert(user.toMapSupabase());
+        .upsert(
+          user.toMapSupabase(),
+          onConflict: 'id',
+        );
   }
 
   Future<void> updateUser(UserModel user) async {
@@ -78,9 +98,61 @@ class SupabaseService {
   }
 
   Future<void> upsertTask(TaskModel task) async {
+    final map = task.toMapSupabase();
     await client
         .from(AppConstants.tableTasks)
-        .upsert(task.toMapSupabase());
+        .upsert(_removeNulls(map), onConflict: 'id');
+  }
+
+  /// Enregistre le token FCM de l'utilisateur pour recevoir les push (ex: après connexion).
+  Future<void> saveFcmToken(String userId, String fcmToken) async {
+    try {
+      await client.from(AppConstants.tableUserFcmTokens).upsert(
+        _removeNulls({
+          'user_id': userId,
+          'fcm_token': fcmToken,
+        }),
+        onConflict: 'user_id',
+      );
+    } catch (e, stack) {
+      debugPrint('saveFcmToken error: $e');
+      debugPrint('saveFcmToken stack: $stack');
+    }
+  }
+
+  /// Appelle l'Edge Function pour envoyer une push aux exécutants, sans le créateur ni l'admin.
+  Future<void> notifyExecutantsNewTask({
+    required String taskId,
+    required String description,
+    int? taskNumber,
+    String? creatorId,
+  }) async {
+    try {
+      final res = await client.functions.invoke(
+        'send-task-created-push',
+        body: {
+          'task_id': taskId,
+          'description': description,
+          'task_number': taskNumber?.toString(),
+          if (creatorId != null && creatorId.isNotEmpty) 'creator_id': creatorId,
+        },
+      );
+      if (kDebugMode) {
+        debugPrint('Push nouvelle tâche: status=${res.status}, data=${res.data}');
+        if (res.data != null && res.data is Map) {
+          final d = res.data as Map;
+          if ((d['sent'] as int?) == 0 && d['message'] != null) {
+            debugPrint('Push: ${d['message']}');
+          }
+        }
+      }
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('Push nouvelle tâche erreur: $e');
+        debugPrint('Stack: $st');
+      }
+      // Ne pas bloquer l'utilisateur si l'Edge Function est indisponible ou en erreur
+    }
   }
 
   Future<void> deleteTaskPermanently(String taskId) async {
@@ -107,7 +179,8 @@ class SupabaseService {
         .eq('deleted', false);
 
     if (immeuble != null && immeuble.isNotEmpty) {
-      query = query.ilike('immeuble', '%$immeuble%');
+      // Désormais, le champ immeuble stocke l'ID de l'immeuble
+      query = query.eq('immeuble', immeuble);
     }
     if (etage != null && etage.isNotEmpty) {
       query = query.eq('etage', etage);
@@ -157,7 +230,8 @@ class SupabaseService {
     }
 
     if (immeuble != null && immeuble.isNotEmpty) {
-      query = query.ilike('immeuble', '%$immeuble%');
+      // Désormais, le champ immeuble stocke l'ID de l'immeuble
+      query = query.eq('immeuble', immeuble);
     }
     if (etage != null && etage.isNotEmpty) {
       query = query.eq('etage', etage);
@@ -189,7 +263,7 @@ class SupabaseService {
   Future<void> insertHistory(TaskHistoryModel history) async {
     await client
         .from(AppConstants.tableTaskHistory)
-        .insert(history.toMapSupabase());
+        .insert(_removeNulls(history.toMapSupabase()));
   }
 
   Future<List<TaskHistoryModel>> getHistoryForTask(String taskId) async {
@@ -242,22 +316,48 @@ class SupabaseService {
   }
 
   // ============================================
-  // UPLOAD DE PHOTOS
+  // UPLOAD DE PHOTOS (Cloudflare R2 via Edge Function)
   // ============================================
 
+  /// Envoie la photo à l'Edge Function qui l'uploade vers R2 (évite TLS appareil → R2).
   Future<String> uploadPhoto(String filePath, String taskId) async {
     final file = File(filePath);
-    final fileName =
-        'task_${taskId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    if (!await file.exists()) {
+      throw Exception('Fichier photo introuvable: $filePath');
+    }
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty) {
+      throw Exception('Fichier photo vide');
+    }
 
-    await client.storage
-        .from(AppConstants.storageBucket)
-        .upload(fileName, file);
+    final uri = Uri.parse(
+      '${AppConstants.supabaseUrl}/functions/v1/upload-photo-r2',
+    );
+    final request = http.MultipartRequest('POST', uri)
+      ..fields['task_id'] = taskId
+      ..files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: 'photo.jpg',
+      ));
 
-    final publicUrl = client.storage
-        .from(AppConstants.storageBucket)
-        .getPublicUrl(fileName);
+    request.headers['apikey'] = AppConstants.supabaseAnonKey;
+    final session = client.auth.currentSession;
+    request.headers['Authorization'] =
+        'Bearer ${session?.accessToken ?? AppConstants.supabaseAnonKey}';
 
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final err = response.body.isNotEmpty ? response.body : '${response.statusCode}';
+      throw Exception('Échec upload photo: $err');
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>?;
+    final publicUrl = data?['public_url'] as String?;
+    if (publicUrl == null || publicUrl.isEmpty) {
+      throw Exception('Réponse Edge Function invalide: public_url manquant');
+    }
     return publicUrl;
   }
   
@@ -275,7 +375,9 @@ class SupabaseService {
   }
 
   Future<void> upsertImmeuble(ImmeubleModel immeuble) async {
-    await client.from('immeubles').upsert(immeuble.toMapSupabase());
+    await client
+        .from('immeubles')
+        .upsert(_removeNulls(immeuble.toMapSupabase()), onConflict: 'id');
   }
 
   Future<void> insertImmeubleIfNotExists(String nom) async {
@@ -320,5 +422,52 @@ class SupabaseService {
         .map((map) => ImmeubleModel.fromMap(map))
         .toList();
   }
-  
+
+  // ============================================
+  // SUPPORT (responsable informatique) – table reference
+  // Clés : SUPPORT_NAME, SUPPORT_FIRST_NAME, SUPPORT_TEL, SUPPORT_EMAIL
+  // ============================================
+
+  /// Récupère les coordonnées du responsable informatique (table reference).
+  Future<Map<String, String>> getSupportContact() async {
+    const keys = ['SUPPORT_NAME', 'SUPPORT_FIRST_NAME', 'SUPPORT_TEL', 'SUPPORT_EMAIL'];
+    try {
+      final response = await client
+          .from('reference')
+          .select('ref_name, ref_val')
+          .inFilter('ref_name', keys);
+      final list = response as List;
+      final byKey = <String, String>{};
+      for (final row in list) {
+        final map = Map<String, dynamic>.from(row as Map);
+        final name = (map['ref_name'] ?? '').toString();
+        final val = (map['ref_val'] ?? '').toString();
+        if (name.isNotEmpty) byKey[name] = val;
+      }
+      return {
+        'nom': byKey['SUPPORT_NAME'] ?? '',
+        'prenom': byKey['SUPPORT_FIRST_NAME'] ?? '',
+        'telephone': byKey['SUPPORT_TEL'] ?? '',
+        'email': byKey['SUPPORT_EMAIL'] ?? '',
+      };
+    } catch (_) {
+      return {'nom': '', 'prenom': '', 'telephone': '', 'email': ''};
+    }
+  }
+
+  /// Récupère une valeur par clé dans la table reference (ex. APP_VER).
+  Future<String> getReferenceValue(String refName) async {
+    try {
+      final response = await client
+          .from('reference')
+          .select('ref_val')
+          .eq('ref_name', refName)
+          .maybeSingle();
+      if (response == null) return '';
+      final map = Map<String, dynamic>.from(response as Map);
+      return (map['ref_val'] ?? '').toString();
+    } catch (_) {
+      return '';
+    }
+  }
 }

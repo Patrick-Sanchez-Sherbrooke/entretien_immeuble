@@ -8,6 +8,8 @@ import '../models/user_model.dart';
 import '../models/task_model.dart';
 import '../models/task_history_model.dart';
 import '../models/immeuble_model.dart';
+import '../utils/storage_exception.dart';
+import 'support_service.dart';
 
 class LocalDbService {
   static Database? _database;
@@ -17,8 +19,23 @@ class LocalDbService {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB();
-    return _database!;
+    try {
+      _database = await _initDB();
+      return _database!;
+    } catch (e, st) {
+      final msg = e.toString();
+      final stack = st.toString();
+      try {
+        await SupportService().reportDatabaseError('$msg\n\n$stack');
+      } catch (_) {
+        // Ignorer si l'envoi d'email échoue (ex. pas de client mail).
+      }
+      throw StorageException(
+        'Impossible d\'accéder à la base de données locale.',
+        details: msg,
+        cause: e,
+      );
+    }
   }
 
   Future<Database> _initDB() async {
@@ -26,8 +43,9 @@ class LocalDbService {
         join(await getDatabasesPath(), 'entretien_immeuble.db');
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _createDB,
+      onUpgrade: _upgradeDB,
     );
   }
 
@@ -60,9 +78,11 @@ class LocalDbService {
         etage TEXT DEFAULT '',
         chambre TEXT DEFAULT '',
         description TEXT NOT NULL,
+        created_by TEXT DEFAULT '',
         done INTEGER DEFAULT 0,
         done_date TEXT,
         done_by TEXT DEFAULT '',
+        execution_note TEXT DEFAULT '',
         last_modified_by TEXT DEFAULT '',
         photo_url TEXT DEFAULT '',
         photo_local_path TEXT DEFAULT '',
@@ -119,6 +139,16 @@ class LocalDbService {
       'created_at': DateTime.now().toIso8601String(),
       'updated_at': DateTime.now().toIso8601String(),
     });
+  }
+
+  Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Ajout des nouvelles colonnes dans la table des tâches
+      await db.execute(
+          'ALTER TABLE tasks ADD COLUMN created_by TEXT DEFAULT \'\'');
+      await db.execute(
+          'ALTER TABLE tasks ADD COLUMN execution_note TEXT DEFAULT \'\'');
+    }
   }
 
   // ============================================
@@ -365,6 +395,28 @@ class LocalDbService {
     );
   }
 
+  /// Supprime l'historique local d'une tâche (ex: quand la tâche est supprimée côté serveur).
+  Future<void> deleteHistoryForTask(String taskId) async {
+    final db = await database;
+    await db.delete(
+      'task_history',
+      where: 'task_id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  /// Ids des tâches locales dont le statut de sync est 'synced' (pour alignement avec le serveur).
+  Future<List<String>> getSyncedTaskIds() async {
+    final db = await database;
+    final results = await db.query(
+      'tasks',
+      columns: ['id'],
+      where: 'sync_status = ?',
+      whereArgs: ['synced'],
+    );
+    return results.map((r) => r['id']! as String).toList();
+  }
+
   // ============================================
   // OPÉRATIONS SUR LES IMMEUBLES
   // ============================================
@@ -416,6 +468,17 @@ class LocalDbService {
     return results
         .map((map) => ImmeubleModel.fromMap(map))
         .toList();
+  }
+
+  Future<ImmeubleModel?> getImmeubleById(String id) async {
+    final db = await database;
+    final results = await db.query(
+      'immeubles',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    if (results.isEmpty) return null;
+    return ImmeubleModel.fromMap(results.first);
   }
 
   Future<void> replaceAllImmeubles(

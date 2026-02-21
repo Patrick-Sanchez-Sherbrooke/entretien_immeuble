@@ -5,6 +5,7 @@
 // ============================================
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
 import '../models/task_model.dart';
 import '../models/immeuble_model.dart';
 import '../services/supabase_service.dart';
@@ -12,6 +13,7 @@ import '../services/local_db_service.dart';
 import '../services/auth_service.dart';
 import '../services/sync_service.dart';
 import '../utils/theme.dart';
+import '../utils/error_util.dart';
 import '../widgets/app_drawer.dart';
 import '../widgets/task_card.dart';
 import 'task_detail_screen.dart';
@@ -37,6 +39,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   // Liste des immeubles
   List<ImmeubleModel> _immeubles = [];
   String? _selectedImmeuble;
+  Map<String, ImmeubleModel> _immeubleById = {};
 
   // Filtres
   final TextEditingController _etageFilter =
@@ -65,23 +68,13 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   }
 
   Future<void> _loadImmeubles() async {
-    // Extraire les immeubles des tâches existantes
-    try {
-      final tasks = await _localDb.getActiveTasks();
-      for (var task in tasks) {
-        if (task.immeuble.isNotEmpty) {
-          await _localDb
-              .insertImmeubleIfNotExists(task.immeuble);
-        }
-      }
-    } catch (e) {
-      // Ignorer
-    }
-
-    final immeubles = await _localDb.getActiveImmeubles();
+    final immeubles = await _localDb.getAllImmeubles();
     if (mounted) {
       setState(() {
         _immeubles = immeubles;
+        _immeubleById = {
+          for (final i in immeubles) i.id: i,
+        };
       });
     }
   }
@@ -93,8 +86,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     } else {
       setState(() {
         _isLoading = false;
-        _errorMessage =
-            'Pas de connexion internet.\nLes archives sont stockées sur le serveur distant.';
+        _errorMessage = AppLocalizations.of(context)!.pasDeConnexionArchives;
       });
     }
   }
@@ -133,31 +125,30 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage =
-              'Erreur de chargement: $e';
+          _errorMessage = AppLocalizations.of(context)!.erreurChargement(e.toString());
         });
       }
     }
   }
 
   Future<void> _unarchiveTask(TaskModel task) async {
+    final l10n = AppLocalizations.of(context)!;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title:
-            const Text('Désarchiver la tâche ?'),
+        title: Text(l10n.desarchiverTacheConfirm),
         content: Text(
-            'Voulez-vous désarchiver la tâche ${task.displayNumber} ?\n\n"${task.description}"'),
+            l10n.desarchiverTacheQuestion(task.displayNumber, task.description)),
         actions: [
           TextButton(
             onPressed: () =>
                 Navigator.pop(context, false),
-            child: const Text('Annuler'),
+            child: Text(l10n.annuler),
           ),
           ElevatedButton(
             onPressed: () =>
                 Navigator.pop(context, true),
-            child: const Text('Désarchiver'),
+            child: Text(l10n.desarchiver),
           ),
         ],
       ),
@@ -184,9 +175,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-                '✅ Tâche désarchivée et restaurée dans la liste'),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.tacheDesarchiveeRestore),
             backgroundColor: AppTheme.successColor,
           ),
         );
@@ -195,7 +185,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ Erreur: $e'),
+            content: Text('${AppLocalizations.of(context)!.erreurPrefix}${formatSyncError(e)}'),
             backgroundColor: AppTheme.errorColor,
           ),
         );
@@ -204,6 +194,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   }
 
   void _showFilterDialog() {
+    final l10n = AppLocalizations.of(context)!;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -228,9 +219,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
               crossAxisAlignment:
                   CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Filtres et tri',
-                  style: TextStyle(
+                Text(
+                  l10n.filtresEtTri,
+                  style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold),
                 ),
@@ -238,25 +229,23 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
 
                 // IMMEUBLE
                 DropdownButtonFormField<String>(
-                  value: _selectedImmeuble,
-                  decoration: const InputDecoration(
-                    labelText: 'Immeuble',
+                  initialValue: _selectedImmeuble,
+                  decoration: InputDecoration(
+                    labelText: l10n.immeuble,
                     prefixIcon:
-                        Icon(Icons.apartment),
+                        const Icon(Icons.apartment),
                   ),
                   isExpanded: true,
-                  hint: const Text(
-                      'Tous les immeubles'),
+                  hint: Text(l10n.tousLesImmeubles),
                   items: [
-                    const DropdownMenuItem<String>(
+                    DropdownMenuItem<String>(
                       value: null,
-                      child: Text(
-                          'Tous les immeubles'),
+                      child: Text(l10n.tousLesImmeubles),
                     ),
                     ..._immeubles.map((immeuble) {
                       return DropdownMenuItem<
                           String>(
-                        value: immeuble.nom,
+                        value: immeuble.id,
                         child:
                             Text(immeuble.nom),
                       );
@@ -278,11 +267,10 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                     Expanded(
                       child: TextField(
                         controller: _etageFilter,
-                        decoration:
-                            const InputDecoration(
-                          labelText: 'Étage',
+                        decoration: InputDecoration(
+                          labelText: l10n.etage,
                           prefixIcon:
-                              Icon(Icons.layers),
+                              const Icon(Icons.layers),
                         ),
                       ),
                     ),
@@ -291,11 +279,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                       child: TextField(
                         controller:
                             _chambreFilter,
-                        decoration:
-                            const InputDecoration(
-                          labelText: 'Chambre',
-                          prefixIcon: Icon(Icons
-                              .door_front_door),
+                        decoration: InputDecoration(
+                          labelText: l10n.chambre,
+                          prefixIcon: const Icon(Icons.door_front_door),
                         ),
                       ),
                     ),
@@ -305,11 +291,10 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
 
                 TextField(
                   controller: _executantFilter,
-                  decoration:
-                      const InputDecoration(
-                    labelText: 'Exécutant',
+                  decoration: InputDecoration(
+                    labelText: l10n.executant,
                     prefixIcon:
-                        Icon(Icons.person),
+                        const Icon(Icons.person),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -322,7 +307,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                     _dateFilter != null
                         ? DateFormat('dd/MM/yyyy')
                             .format(_dateFilter!)
-                        : 'Date d\'exécution',
+                        : l10n.dateExecutionLong,
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -373,8 +358,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                const Text('Trier par :',
-                    style: TextStyle(
+                Text(l10n.trierPar,
+                    style: const TextStyle(
                         fontWeight:
                             FontWeight.w600)),
                 const SizedBox(height: 8),
@@ -382,8 +367,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                   spacing: 8,
                   children: [
                     ChoiceChip(
-                      label: const Text(
-                          'Date modif.'),
+                      label: Text(l10n.dateModif),
                       selected:
                           _sortBy == 'updated_at',
                       onSelected: (_) {
@@ -396,8 +380,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                       },
                     ),
                     ChoiceChip(
-                      label: const Text(
-                          'Immeuble'),
+                      label: Text(l10n.immeuble),
                       selected:
                           _sortBy == 'immeuble',
                       onSelected: (_) {
@@ -408,8 +391,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                       },
                     ),
                     ChoiceChip(
-                      label: const Text(
-                          'Date exéc.'),
+                      label: Text(l10n.dateExecution),
                       selected:
                           _sortBy == 'done_date',
                       onSelected: (_) {
@@ -422,8 +404,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                       },
                     ),
                     ChoiceChip(
-                      label:
-                          const Text('Étage'),
+                      label: Text(l10n.etage),
                       selected:
                           _sortBy == 'etage',
                       onSelected: (_) {
@@ -439,10 +420,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
 
                 Row(
                   children: [
-                    const Text('Ordre : '),
+                    Text('${l10n.ordre} '),
                     ChoiceChip(
-                      label: const Text(
-                          'Croissant ↑'),
+                      label: Text(l10n.croissant),
                       selected: _sortAscending,
                       onSelected: (_) {
                         setModalState(() =>
@@ -453,8 +433,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                     ),
                     const SizedBox(width: 8),
                     ChoiceChip(
-                      label: const Text(
-                          'Décroissant ↓'),
+                      label: Text(l10n.decroissant),
                       selected: !_sortAscending,
                       onSelected: (_) {
                         setModalState(() =>
@@ -499,8 +478,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                           Navigator.pop(context);
                           _loadArchivedTasks();
                         },
-                        child: const Text(
-                            'Réinitialiser'),
+                        child: Text(l10n.reinitialiser),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -510,8 +488,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                           Navigator.pop(context);
                           _loadArchivedTasks();
                         },
-                        child: const Text(
-                            'Appliquer'),
+                        child: Text(l10n.appliquer),
                       ),
                     ),
                   ],
@@ -526,13 +503,14 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Archives'),
+        title: Text(l10n.archives),
         actions: [
           IconButton(
             icon: const Icon(Icons.filter_list),
-            tooltip: 'Filtres',
+            tooltip: l10n.filtres,
             onPressed: _hasConnection
                 ? _showFilterDialog
                 : null,
@@ -573,8 +551,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                               _checkConnectionAndLoad,
                           icon: const Icon(
                               Icons.refresh),
-                          label: const Text(
-                              'Réessayer'),
+                          label: Text(l10n.reessayer),
                         ),
                       ],
                     ),
@@ -591,13 +568,12 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                               size: 80,
                               color: AppTheme
                                   .textSecondary
-                                  .withOpacity(
-                                      0.3)),
+                                  .withValues(alpha: 0.3)),
                           const SizedBox(
                               height: 16),
-                          const Text(
-                            'Aucune tâche archivée',
-                            style: TextStyle(
+                          Text(
+                            l10n.aucuneTacheArchivee,
+                            style: const TextStyle(
                               fontSize: 18,
                               color: AppTheme
                                   .textSecondary,
@@ -616,7 +592,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                                 const EdgeInsets
                                     .all(12),
                             child: Text(
-                              '${_archivedTasks.length} tâche(s) archivée(s)',
+                              l10n.tachesArchiveesCount(_archivedTasks.length.toString()),
                               style:
                                   const TextStyle(
                                 color: AppTheme
@@ -643,8 +619,13 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                                 final task =
                                     _archivedTasks[
                                         index];
+                                final immeubleName =
+                                    _immeubleById[task.immeuble]?.nom ??
+                                        task.immeuble;
                                 return TaskCard(
                                   task: task,
+                                  immeubleName:
+                                      immeubleName,
                                   onTap: () {
                                     Navigator
                                         .push(

@@ -4,6 +4,7 @@
 // ============================================
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -38,6 +39,7 @@ class _ReportScreenState extends State<ReportScreen> {
   // Liste des immeubles
   List<ImmeubleModel> _immeubles = [];
   String? _selectedImmeuble;
+  Map<String, ImmeubleModel> _immeubleById = {};
 
   // Filtres
   final TextEditingController _etageFilter =
@@ -48,8 +50,20 @@ class _ReportScreenState extends State<ReportScreen> {
       TextEditingController();
   DateTime? _dateFilter;
   String? _statusFilter;
-  String _sortBy = 'created_at';
-  bool _sortAscending = false;
+
+  // Tri multicritère : liste de (champ, croissant/décroissant) — libellés via l10n
+  static List<({String key, String label})> _sortOptions(AppLocalizations l10n) => [
+    (key: 'created_at', label: l10n.dateCreation),
+    (key: 'immeuble', label: l10n.immeuble),
+    (key: 'done_date', label: l10n.dateExecution),
+    (key: 'description', label: l10n.description),
+    (key: 'etage', label: l10n.etage),
+    (key: 'chambre', label: l10n.chambre),
+    (key: 'done_by', label: l10n.executantLabel),
+  ];
+  List<({String field, bool ascending})> _sortCriteria = [
+    (field: 'created_at', ascending: false),
+  ];
 
   @override
   void initState() {
@@ -66,25 +80,63 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 
   Future<void> _loadImmeubles() async {
-    // Extraire les immeubles des tâches existantes
-    try {
-      final tasks = await _localDb.getActiveTasks();
-      for (var task in tasks) {
-        if (task.immeuble.isNotEmpty) {
-          await _localDb
-              .insertImmeubleIfNotExists(task.immeuble);
-        }
-      }
-    } catch (e) {
-      // Ignorer
-    }
-
-    final immeubles = await _localDb.getActiveImmeubles();
+    final immeubles = await _localDb.getAllImmeubles();
     if (mounted) {
       setState(() {
         _immeubles = immeubles;
+        _immeubleById = {
+          for (final i in immeubles) i.id: i,
+        };
       });
     }
+  }
+
+  int _compareTaskByField(TaskModel a, TaskModel b, String field, bool ascending) {
+    int cmp;
+    switch (field) {
+      case 'created_at':
+        cmp = a.createdAt.compareTo(b.createdAt);
+        break;
+      case 'immeuble':
+        cmp = (_immeubleById[a.immeuble]?.nom ?? a.immeuble)
+            .compareTo(_immeubleById[b.immeuble]?.nom ?? b.immeuble);
+        break;
+      case 'done_date':
+        final da = a.doneDate ?? DateTime(1970);
+        final db = b.doneDate ?? DateTime(1970);
+        cmp = da.compareTo(db);
+        break;
+      case 'description':
+        cmp = a.description.compareTo(b.description);
+        break;
+      case 'etage':
+        cmp = a.etage.compareTo(b.etage);
+        break;
+      case 'chambre':
+        cmp = a.chambre.compareTo(b.chambre);
+        break;
+      case 'done_by':
+        cmp = a.doneBy.compareTo(b.doneBy);
+        break;
+      default:
+        cmp = 0;
+    }
+    return ascending ? cmp : -cmp;
+  }
+
+  List<TaskModel> _sortTasksWithCriteria(
+    List<TaskModel> tasks,
+    List<({String field, bool ascending})> criteria,
+  ) {
+    if (criteria.isEmpty) return List<TaskModel>.from(tasks);
+    return List<TaskModel>.from(tasks)
+      ..sort((a, b) {
+        for (final c in criteria) {
+          final cmp = _compareTaskByField(a, b, c.field, c.ascending);
+          if (cmp != 0) return cmp;
+        }
+        return 0;
+      });
   }
 
   Future<void> _generateReport() async {
@@ -107,6 +159,9 @@ class _ReportScreenState extends State<ReportScreen> {
     });
 
     try {
+      final firstSort = _sortCriteria.isNotEmpty
+          ? _sortCriteria.first
+          : (field: 'created_at', ascending: false);
       final tasks = await _supabase.getTasksReport(
         immeuble: _selectedImmeuble,
         etage: _etageFilter.text.trim().isNotEmpty
@@ -122,13 +177,16 @@ class _ReportScreenState extends State<ReportScreen> {
                 : null,
         doneDate: _dateFilter,
         status: _statusFilter,
-        orderBy: _sortBy,
-        ascending: _sortAscending,
+        orderBy: firstSort.field,
+        ascending: firstSort.ascending,
       );
+
+      // Tri multicritère (appliquer les critères suivants en Dart)
+      final sorted = _sortTasksWithCriteria(tasks, _sortCriteria);
 
       if (mounted) {
         setState(() {
-          _reportTasks = tasks;
+          _reportTasks = sorted;
           _isLoading = false;
         });
       }
@@ -175,7 +233,7 @@ class _ReportScreenState extends State<ReportScreen> {
           ],
         ),
         build: (context) => [
-          pw.Table.fromTextArray(
+          pw.TableHelper.fromTextArray(
             headerStyle: pw.TextStyle(
               fontWeight: pw.FontWeight.bold,
               fontSize: 9,
@@ -205,8 +263,10 @@ class _ReportScreenState extends State<ReportScreen> {
               'Date',
             ],
             data: _reportTasks.map((task) {
+              final immeubleName =
+                  _immeubleById[task.immeuble]?.nom ?? task.immeuble;
               return [
-                task.immeuble,
+                immeubleName,
                 task.description.length > 40
                     ? '${task.description.substring(0, 40)}...'
                     : task.description,
@@ -341,7 +401,7 @@ class _ReportScreenState extends State<ReportScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Rapports'),
+        title: Text(AppLocalizations.of(context)!.rapportsTitre),
         actions: [
           if (_reportTasks.isNotEmpty) ...[
             IconButton(
@@ -374,24 +434,24 @@ class _ReportScreenState extends State<ReportScreen> {
 
             // IMMEUBLE
             DropdownButtonFormField<String>(
-              value: _selectedImmeuble,
-              decoration: const InputDecoration(
-                labelText: 'Immeuble',
+              initialValue: _selectedImmeuble,
+              decoration: InputDecoration(
+                labelText: AppLocalizations.of(context)!.immeuble,
                 prefixIcon:
-                    Icon(Icons.apartment),
+                    const Icon(Icons.apartment),
               ),
               isExpanded: true,
-              hint: const Text(
-                  'Tous les immeubles'),
+              hint: Text(
+                  AppLocalizations.of(context)!.tousLesImmeubles),
               items: [
-                const DropdownMenuItem<String>(
+                DropdownMenuItem<String>(
                   value: null,
                   child: Text(
-                      'Tous les immeubles'),
+                      AppLocalizations.of(context)!.tousLesImmeubles),
                 ),
                 ..._immeubles.map((immeuble) {
                   return DropdownMenuItem<String>(
-                    value: immeuble.nom,
+                    value: immeuble.id,
                     child: Text(immeuble.nom),
                   );
                 }),
@@ -410,11 +470,10 @@ class _ReportScreenState extends State<ReportScreen> {
                 Expanded(
                   child: TextField(
                     controller: _etageFilter,
-                    decoration:
-                        const InputDecoration(
-                      labelText: 'Étage',
+                    decoration: InputDecoration(
+                      labelText: AppLocalizations.of(context)!.etage,
                       prefixIcon:
-                          Icon(Icons.layers),
+                          const Icon(Icons.layers),
                     ),
                   ),
                 ),
@@ -422,11 +481,9 @@ class _ReportScreenState extends State<ReportScreen> {
                 Expanded(
                   child: TextField(
                     controller: _chambreFilter,
-                    decoration:
-                        const InputDecoration(
-                      labelText: 'Chambre',
-                      prefixIcon: Icon(
-                          Icons.door_front_door),
+                    decoration: InputDecoration(
+                      labelText: AppLocalizations.of(context)!.chambre,
+                      prefixIcon: const Icon(Icons.door_front_door),
                     ),
                   ),
                 ),
@@ -437,11 +494,10 @@ class _ReportScreenState extends State<ReportScreen> {
             // Exécutant
             TextField(
               controller: _executantFilter,
-              decoration:
-                  const InputDecoration(
-                labelText: 'Exécutant',
+              decoration: InputDecoration(
+                labelText: AppLocalizations.of(context)!.executantLabel,
                 prefixIcon:
-                    Icon(Icons.person),
+                    const Icon(Icons.person),
               ),
             ),
             const SizedBox(height: 12),
@@ -454,7 +510,7 @@ class _ReportScreenState extends State<ReportScreen> {
                 title: Text(_dateFilter != null
                     ? DateFormat('dd/MM/yyyy')
                         .format(_dateFilter!)
-                    : 'Date d\'exécution'),
+                    : AppLocalizations.of(context)!.dateExecutionLong),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -498,8 +554,9 @@ class _ReportScreenState extends State<ReportScreen> {
             const SizedBox(height: 12),
 
             // Statut
-            const Text('Statut :',
-                style: TextStyle(
+            Text(
+                AppLocalizations.of(context)!.statutLabel,
+                style: const TextStyle(
                     fontWeight:
                         FontWeight.w600)),
             const SizedBox(height: 8),
@@ -507,15 +564,16 @@ class _ReportScreenState extends State<ReportScreen> {
               spacing: 8,
               children: [
                 ChoiceChip(
-                  label: const Text('Tous'),
+                  label: Text(
+                      AppLocalizations.of(context)!.toutes),
                   selected:
                       _statusFilter == null,
                   onSelected: (_) => setState(
                       () => _statusFilter = null),
                 ),
                 ChoiceChip(
-                  label:
-                      const Text('En cours'),
+                  label: Text(
+                      AppLocalizations.of(context)!.enCours),
                   selected:
                       _statusFilter == 'pending',
                   onSelected: (_) => setState(
@@ -523,8 +581,8 @@ class _ReportScreenState extends State<ReportScreen> {
                           'pending'),
                 ),
                 ChoiceChip(
-                  label:
-                      const Text('Terminées'),
+                  label: Text(
+                      AppLocalizations.of(context)!.terminees),
                   selected:
                       _statusFilter == 'done',
                   onSelected: (_) => setState(
@@ -532,8 +590,8 @@ class _ReportScreenState extends State<ReportScreen> {
                           'done'),
                 ),
                 ChoiceChip(
-                  label:
-                      const Text('Archivées'),
+                  label: Text(
+                      AppLocalizations.of(context)!.statusArchivees),
                   selected: _statusFilter ==
                       'archived',
                   onSelected: (_) => setState(
@@ -544,43 +602,100 @@ class _ReportScreenState extends State<ReportScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Tri
-            const Text('Trier par :',
-                style: TextStyle(
-                    fontWeight:
-                        FontWeight.w600)),
+            // Tri multicritère
+            Text(
+                AppLocalizations.of(context)!.trierPar,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                ChoiceChip(
-                  label: const Text(
-                      'Date création'),
-                  selected:
-                      _sortBy == 'created_at',
-                  onSelected: (_) => setState(
-                      () => _sortBy =
-                          'created_at'),
+            ...List.generate(_sortCriteria.length, (i) {
+              final l10n = AppLocalizations.of(context)!;
+              final c = _sortCriteria[i];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: DropdownButtonFormField<String>(
+                        initialValue: c.field,
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                        ),
+                        items: _sortOptions(l10n)
+                            .map((o) => DropdownMenuItem(
+                                  value: o.key,
+                                  child: Text(o.label),
+                                ))
+                            .toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() {
+                            _sortCriteria = [
+                              ..._sortCriteria.sublist(0, i),
+                              (field: value, ascending: c.ascending),
+                              ..._sortCriteria.sublist(i + 1),
+                            ];
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      label: Text(c.ascending ? AppLocalizations.of(context)!.croissantShort : AppLocalizations.of(context)!.decroissantShort),
+                      selected: true,
+                      onSelected: (_) {
+                        setState(() {
+                          _sortCriteria = [
+                            ..._sortCriteria.sublist(0, i),
+                            (field: c.field, ascending: !c.ascending),
+                            ..._sortCriteria.sublist(i + 1),
+                          ];
+                        });
+                      },
+                    ),
+                    if (_sortCriteria.length > 1)
+                      IconButton(
+                        icon: const Icon(Icons.remove_circle_outline,
+                            color: AppTheme.errorColor),
+                        onPressed: () {
+                          setState(() {
+                            _sortCriteria = [
+                              ..._sortCriteria.sublist(0, i),
+                              ..._sortCriteria.sublist(i + 1),
+                            ];
+                          });
+                        },
+                        tooltip: AppLocalizations.of(context)!.retirerCriterTri,
+                      ),
+                  ],
                 ),
-                ChoiceChip(
-                  label:
-                      const Text('Immeuble'),
-                  selected:
-                      _sortBy == 'immeuble',
-                  onSelected: (_) => setState(
-                      () =>
-                          _sortBy = 'immeuble'),
-                ),
-                ChoiceChip(
-                  label: const Text(
-                      'Date exéc.'),
-                  selected:
-                      _sortBy == 'done_date',
-                  onSelected: (_) => setState(
-                      () => _sortBy =
-                          'done_date'),
-                ),
-              ],
+              );
+            }),
+            TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  final l10n = AppLocalizations.of(context)!;
+                  final used = _sortCriteria.map((c) => c.field).toSet();
+                  String? next;
+                  for (final o in _sortOptions(l10n)) {
+                    if (!used.contains(o.key)) {
+                      next = o.key;
+                      break;
+                    }
+                  }
+                  if (next != null) {
+                    _sortCriteria = [
+                      ..._sortCriteria,
+                      (field: next, ascending: true),
+                    ];
+                  }
+                });
+              },
+              icon: const Icon(Icons.add),
+              label: Text(AppLocalizations.of(context)!.ajouterCriterTri),
             ),
             const SizedBox(height: 24),
 
@@ -605,8 +720,8 @@ class _ReportScreenState extends State<ReportScreen> {
                     : const Icon(
                         Icons.assessment),
                 label: Text(_isLoading
-                    ? 'Chargement...'
-                    : 'Générer le rapport'),
+                    ? AppLocalizations.of(context)!.chargement
+                    : AppLocalizations.of(context)!.genererRapport),
               ),
             ),
             const SizedBox(height: 24),
@@ -619,7 +734,7 @@ class _ReportScreenState extends State<ReportScreen> {
                         .spaceBetween,
                 children: [
                   Text(
-                    '${_reportTasks.length} résultat(s)',
+                    AppLocalizations.of(context)!.resultatsCount(_reportTasks.length.toString()),
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight:
@@ -635,7 +750,7 @@ class _ReportScreenState extends State<ReportScreen> {
                               color: AppTheme
                                   .primaryColor),
                           tooltip:
-                              'Partager par email',
+                              AppLocalizations.of(context)!.partagerEmail,
                           onPressed: _sharePdf,
                         ),
                         IconButton(
@@ -643,7 +758,7 @@ class _ReportScreenState extends State<ReportScreen> {
                               Icons.print,
                               color: AppTheme
                                   .primaryColor),
-                          tooltip: 'Imprimer',
+                          tooltip: AppLocalizations.of(context)!.imprimer,
                           onPressed: _printPdf,
                         ),
                       ],
@@ -673,7 +788,8 @@ class _ReportScreenState extends State<ReportScreen> {
                                     .warningColor,
                       ),
                       title: Text(
-                        task.immeuble,
+                        _immeubleById[task.immeuble]?.nom ??
+                            task.immeuble,
                         style: const TextStyle(
                             fontWeight:
                                 FontWeight.w600),
@@ -693,7 +809,7 @@ class _ReportScreenState extends State<ReportScreen> {
                               task.chambre
                                   .isNotEmpty)
                             Text(
-                              '${task.etage.isNotEmpty ? "Ét. ${task.etage}" : ""}${task.chambre.isNotEmpty ? " Ch. ${task.chambre}" : ""}',
+                              '${task.etage.isNotEmpty ? AppLocalizations.of(context)!.etageLabel(task.etage) : ""}${task.chambre.isNotEmpty ? " ${AppLocalizations.of(context)!.chambreShort(task.chambre)}" : ""}',
                               style:
                                   const TextStyle(
                                 fontSize: 12,
@@ -702,7 +818,7 @@ class _ReportScreenState extends State<ReportScreen> {
                               ),
                             ),
                           Text(
-                            '${task.statusText}${task.doneBy.isNotEmpty ? " — ${task.doneBy}" : ""}',
+                            '${task.archived ? AppLocalizations.of(context)!.statusArchivee : (task.done ? AppLocalizations.of(context)!.terminees : AppLocalizations.of(context)!.enCours)}${task.doneBy.isNotEmpty ? " — ${task.doneBy}" : ""}',
                             style:
                                 const TextStyle(
                               fontSize: 12,

@@ -5,6 +5,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
 import '../models/task_history_model.dart';
 import '../services/local_db_service.dart';
 import '../services/supabase_service.dart';
@@ -65,9 +66,10 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Historique des modifications'),
+        title: Text(l10n.historiqueModifications),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -78,11 +80,11 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                     children: [
                       Icon(Icons.history,
                           size: 80,
-                          color: AppTheme.textSecondary.withOpacity(0.3)),
+                          color: AppTheme.textSecondary.withValues(alpha: 0.3)),
                       const SizedBox(height: 16),
-                      const Text(
-                        'Aucune modification enregistrée',
-                        style: TextStyle(
+                      Text(
+                        l10n.aucuneModificationEnregistree,
+                        style: const TextStyle(
                           fontSize: 18,
                           color: AppTheme.textSecondary,
                         ),
@@ -97,14 +99,46 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                     itemCount: _history.length,
                     itemBuilder: (context, index) {
                       final entry = _history[index];
-                      return _buildHistoryTile(entry);
+                      return _buildHistoryTile(entry, l10n);
                     },
                   ),
                 ),
     );
   }
 
-  Widget _buildHistoryTile(TaskHistoryModel entry) {
+  String _champLabel(String champModifie, AppLocalizations l10n) {
+    switch (champModifie) {
+      case 'immeuble':
+        return l10n.immeuble;
+      case 'etage':
+        return l10n.etage;
+      case 'chambre':
+        return l10n.chambre;
+      case 'description':
+        return l10n.description;
+      case 'done':
+        return l10n.statut;
+      case 'done_date':
+        return l10n.dateExecutionLong;
+      case 'done_by':
+        return l10n.executant;
+      case 'photo_url':
+        return l10n.photo;
+      case 'archived':
+        return l10n.archivage;
+      case 'planned_date':
+        return l10n.datePlanifiee;
+      case 'execution_note':
+        return l10n.noteExecution;
+      case 'creation':
+        return l10n.tacheCreeeSansNum;
+      default:
+        return champModifie;
+    }
+  }
+
+  Widget _buildHistoryTile(
+      TaskHistoryModel entry, AppLocalizations l10n) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
@@ -117,7 +151,10 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  DateFormat('dd/MM/yyyy à HH:mm').format(entry.modifiedAt),
+                  l10n.dateEtHeure(
+                    DateFormat('dd/MM/yyyy').format(entry.modifiedAt),
+                    DateFormat('HH:mm').format(entry.modifiedAt),
+                  ),
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -131,7 +168,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Par : ${entry.modifiedByName.isNotEmpty ? entry.modifiedByName : "Inconnu"}',
+              '${l10n.parModification} ${entry.modifiedByName.isNotEmpty ? entry.modifiedByName : l10n.inconnu}',
               style: const TextStyle(
                 fontSize: 12,
                 color: AppTheme.textSecondary,
@@ -146,11 +183,11 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: AppTheme.primaryColor.withOpacity(0.1),
+                    color: AppTheme.primaryColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    entry.champLabel,
+                    _champLabel(entry.champModifie, l10n),
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -175,7 +212,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                       entry.ancienneValeur,
                       style: TextStyle(
                         fontSize: 14,
-                        color: AppTheme.errorColor.withOpacity(0.8),
+                        color: AppTheme.errorColor.withValues(alpha: 0.8),
                         decoration: TextDecoration.lineThrough,
                       ),
                     ),

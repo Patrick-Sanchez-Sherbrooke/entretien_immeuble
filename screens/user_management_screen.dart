@@ -3,11 +3,14 @@
 // ÉCRAN GESTION DES UTILISATEURS (ADMIN UNIQUEMENT)
 // ============================================
 import 'package:flutter/material.dart';
+import 'package:entretien_immeuble/l10n/app_localizations.dart';
 import '../models/user_model.dart';
+import '../services/auth_service.dart';
 import '../services/local_db_service.dart';
 import '../services/supabase_service.dart';
 import '../services/sync_service.dart';
 import '../utils/theme.dart';
+import '../utils/error_util.dart';
 import '../widgets/app_drawer.dart';
 import 'user_form_screen.dart';
 
@@ -41,6 +44,12 @@ class _UserManagementScreenState
       users = await LocalDbService().getActiveUsers();
     }
 
+    // Ne pas afficher l'admin connecté dans la liste
+    final currentUserId = AuthService().currentUser?.id;
+    if (currentUserId != null) {
+      users = users.where((u) => u.id != currentUserId).toList();
+    }
+
     if (mounted) {
       setState(() {
         _users = users;
@@ -50,19 +59,20 @@ class _UserManagementScreenState
   }
 
   Future<void> _toggleArchive(UserModel user) async {
+    final l10n = AppLocalizations.of(context)!;
     final newArchived = !user.archived;
-    final action = newArchived ? 'Archiver' : 'Désarchiver';
+    final action = newArchived ? l10n.archiver : l10n.desarchiver;
 
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('$action l\'utilisateur ?'),
+        title: Text(newArchived ? l10n.archiverUtilisateurConfirm : l10n.desarchiverUtilisateurConfirm),
         content: Text(
-            'Voulez-vous $action ${user.nomComplet} ?'),
+            newArchived ? l10n.archiverUtilisateurQuestion(user.nomComplet) : l10n.desarchiverUtilisateurQuestion(user.nomComplet)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Annuler'),
+            child: Text(l10n.annuler),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
@@ -74,58 +84,81 @@ class _UserManagementScreenState
 
     if (confirm != true) return;
 
-    final updatedUser = user.copyWith(
-      archived: newArchived,
-      updatedAt: DateTime.now(),
-    );
-
-    await LocalDbService().updateUser(updatedUser);
-
-    // Synchroniser si possible
-    if (await SyncService().hasConnection()) {
-      try {
-        await SupabaseService().updateUser(updatedUser);
-      } catch (e) {
-        // Sera synchronisé plus tard
-      }
-    }
-
-    await _loadUsers();
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(newArchived
-              ? '📦 Utilisateur archivé'
-              : '✅ Utilisateur désarchivé'),
-          backgroundColor: newArchived
-              ? AppTheme.archiveColor
-              : AppTheme.successColor,
-        ),
+    try {
+      final updatedUser = user.copyWith(
+        archived: newArchived,
+        updatedAt: DateTime.now(),
       );
+
+      // 1. Modifier en base locale
+      await LocalDbService().updateUser(updatedUser);
+
+      // 2. Envoyer sur le serveur immédiatement après validation
+      String? syncError;
+      if (await SyncService().hasConnection()) {
+        try {
+          await SupabaseService().updateUser(updatedUser);
+} catch (e) {
+        syncError = formatSyncError(e);
+      }
+      } else {
+        syncError = 'Pas de connexion internet';
+      }
+
+      await _loadUsers();
+
+      if (mounted) {
+        final l10n2 = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              syncError == null
+                  ? (newArchived ? l10n2.utilisateurArchive : l10n2.utilisateurDesarchive)
+                  : (newArchived ? l10n2.utilisateurArchiveDistant(syncError) : l10n2.utilisateurDesarchiveDistant(syncError)),
+            ),
+            backgroundColor: syncError == null
+                ? (newArchived ? AppTheme.archiveColor : AppTheme.successColor)
+                : AppTheme.warningColor,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        final l10n2 = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${l10n2.erreurPrefix}$e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Gestion des utilisateurs'),
+        title: Text(l10n.gestionDesUtilisateurs),
         actions: [
           FilterChip(
             label: Text(
-              _showArchived ? 'Tous' : 'Actifs',
+              _showArchived ? l10n.toutes : l10n.actifs,
               style: const TextStyle(
-                  color: Colors.white, fontSize: 12),
+                color: AppTheme.textPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             selected: _showArchived,
             onSelected: (value) {
               setState(() => _showArchived = value);
               _loadUsers();
             },
-            backgroundColor: Colors.white24,
-            selectedColor: Colors.white38,
-            checkmarkColor: Colors.white,
+            backgroundColor: Colors.white.withValues(alpha: 0.9),
+            selectedColor: AppTheme.primaryColor.withValues(alpha: 0.3),
+            checkmarkColor: AppTheme.primaryColor,
           ),
           const SizedBox(width: 8),
         ],
@@ -151,11 +184,11 @@ class _UserManagementScreenState
                       Icon(Icons.people_outline,
                           size: 80,
                           color: AppTheme.textSecondary
-                              .withOpacity(0.3)),
+                              .withValues(alpha: 0.3)),
                       const SizedBox(height: 16),
-                      const Text(
-                        'Aucun utilisateur',
-                        style: TextStyle(
+                      Text(
+                        l10n.aucunUtilisateur,
+                        style: const TextStyle(
                           fontSize: 18,
                           color: AppTheme.textSecondary,
                         ),
@@ -178,6 +211,7 @@ class _UserManagementScreenState
   }
 
   Widget _buildUserCard(UserModel user) {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       child: ListTile(
         leading: CircleAvatar(
@@ -185,7 +219,9 @@ class _UserManagementScreenState
               ? AppTheme.archiveColor
               : user.isAdmin
                   ? AppTheme.primaryColor
-                  : AppTheme.secondaryColor,
+                  : user.isPlanificateur
+                      ? AppTheme.warningColor
+                      : AppTheme.secondaryColor,
           child: Text(
             user.prenom.isNotEmpty
                 ? user.prenom[0].toUpperCase()
@@ -214,17 +250,25 @@ class _UserManagementScreenState
                   horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
                 color: user.isAdmin
-                    ? AppTheme.primaryColor.withOpacity(0.1)
-                    : AppTheme.secondaryColor.withOpacity(0.1),
+                    ? AppTheme.primaryColor.withValues(alpha: 0.1)
+                    : user.isPlanificateur
+                        ? AppTheme.warningColor.withValues(alpha: 0.1)
+                        : AppTheme.secondaryColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
-                user.isAdmin ? 'Admin' : 'Exécutant',
+                user.isAdmin
+                    ? l10n.administrateur
+                    : user.isPlanificateur
+                        ? l10n.planificateur
+                        : l10n.executant,
                 style: TextStyle(
                   fontSize: 11,
                   color: user.isAdmin
                       ? AppTheme.primaryColor
-                      : AppTheme.secondaryColor,
+                      : user.isPlanificateur
+                          ? AppTheme.warningColor
+                          : AppTheme.secondaryColor,
                 ),
               ),
             ),
@@ -245,14 +289,14 @@ class _UserManagementScreenState
             }
           },
           itemBuilder: (context) => [
-            const PopupMenuItem(
+            PopupMenuItem(
               value: 'edit',
               child: Row(
                 children: [
-                  Icon(Icons.edit,
+                  const Icon(Icons.edit,
                       color: AppTheme.primaryColor),
-                  SizedBox(width: 8),
-                  Text('Modifier'),
+                  const SizedBox(width: 8),
+                  Text(l10n.modifier),
                 ],
               ),
             ),
@@ -270,8 +314,8 @@ class _UserManagementScreenState
                   ),
                   const SizedBox(width: 8),
                   Text(user.archived
-                      ? 'Désarchiver'
-                      : 'Archiver'),
+                      ? l10n.desarchiver
+                      : l10n.archiver),
                 ],
               ),
             ),
